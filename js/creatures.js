@@ -9,6 +9,7 @@
 
   let draft = null;        // the creature being edited (a copy)
   let originalName = null; // its saved name, when editing an existing custom creature
+  let copiedFrom = null;   // the creature a new one was copied from
   let armorClass = 'None';
   let els = {};
 
@@ -25,8 +26,10 @@
     draft = JSON.parse(JSON.stringify(n));
     if (n.custom) {
       originalName = n.name;
+      copiedFrom = null;
     } else {
       originalName = null;
+      copiedFrom = n.name;
       draft.name = n.name + ' (custom)';
       delete draft.id;
     }
@@ -55,7 +58,7 @@
       h('option', { value: '' }, 'Start from an existing creature…'),
       GameData.all().slice().sort((a, b) => a.name.localeCompare(b.name)).map(n => h('option', { value: n.name }, n.name)));
     fill(els.list,
-      h('button.primary', { onclick: () => { draft = blank(); originalName = null; armorClass = 'None'; drawList(); drawEditor(); } }, 'New creature'),
+      h('button.primary', { onclick: () => { draft = blank(); originalName = null; copiedFrom = null; armorClass = 'None'; drawList(); drawEditor(); } }, 'New creature'),
       h('div.row', copyFrom, h('button', {
         onclick: () => { if (copyFrom.value) { editCopyOf(GameData.find(copyFrom.value)); drawList(); drawEditor(); } }
       }, 'Copy')),
@@ -90,7 +93,7 @@
     els.budget = h('div.card.budget');
     fill(els.editor,
       h('div.editor-head',
-        h('h1', originalName ? 'Edit ' + originalName : 'New creature'),
+        h('h1', originalName ? 'Edit ' + originalName : copiedFrom ? 'New creature from ' + copiedFrom : 'New creature'),
         h('div.row',
           h('button.primary', { onclick: save }, 'Save'),
           h('button.ghost', { onclick: () => { draft = null; drawList(); drawEditor(); } }, 'Close'),

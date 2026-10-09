@@ -1,20 +1,20 @@
 // Combat tab: set up from the current encounter, initiative, turn order, the grid,
-// a detail panel for the selected token (HP, stacks, conditions, effects, enemy turns),
-// and ending combat with XP.
+// and a panel for the selected token. Players run their own characters, so the GM
+// only tracks their HP and position; enemies get attacks, stacks, and conditions.
 (function () {
   const { h, fill, toast, fmt } = UI;
   const S = () => Store.state;
   const DEFAULT_MAP = { cols: 24, rows: 16, cell: 40, lineOpacity: 0.35, imageKey: null };
+  const DEFENSES = [['none', 'Hit'], ['failed', 'Failed dodge ×1.5'], ['block', 'Blocked'], ['dodged', 'Dodged']];
 
   let root = null;
   let els = {};
   let grid = null;
   let selectedId = null;
   let ruler = false;
-  let mapOpen = false;
-  let addOpen = false;
+  let openMenu = null;    // 'map' or 'add'
   let ambush = '';
-  let plan = null;        // enemy turn in progress: { cid, choice, attack, targets: { id: { on, dodge, block } } }
+  let plan = null;        // the selected enemy's attack: { cid, ability, tactic, targets, roll, manual, ap }
   let report = null;      // lines from the last end of phase
   let ending = false;     // showing the end-combat screen
   let xpAll = false;      // award XP for enemies that were not defeated too
@@ -50,11 +50,15 @@
     els = { bar: h('div.combat-bar'), left: h('div.combat-left'), center: h('div.combat-center'), right: h('div.combat-right') };
     fill(root, els.bar, h('div.combat-layout', els.left, els.center, els.right));
     grid = Grid.create(els.center, {
-      onSelect: id => { selectedId = id; refresh(); },
+      onSelect: id => {
+        // While an enemy attack is being aimed, clicking a target's token aims at it.
+        if (aiming() && isTarget(Combat.get(combat(), id))) return toggleTarget(id);
+        selectedId = id;
+        refresh();
+      },
       onMove: (id, x, y) => act(() => {
         const c = Combat.get(combat(), id);
         c.x = x; c.y = y;
-        selectedId = id;
       })
     });
     refresh();
@@ -67,12 +71,18 @@
       const a = activeCombatant(cb);
       selectedId = a ? a.id : (cb.combatants[0] || {}).id;
     }
+    if (plan && plan.cid !== selectedId) plan = null;
     drawBar(cb);
     drawLeft(cb);
     drawRight(cb);
+    drawGrid(cb);
+  }
+
+  function drawGrid(cb) {
     grid.update({
       map: mapOf(cb), combatants: cb.combatants, selectedId,
-      activeId: (activeCombatant(cb) || {}).id, ruler
+      activeId: (activeCombatant(cb) || {}).id, ruler,
+      targetIds: aiming() ? Object.keys(plan.targets) : []
     });
   }
 
@@ -100,7 +110,7 @@
     const cb = Combat.fromEncounter(enc, S().players);
     autoPlace(cb, mapOf(cb));
     S().combat = cb;
-    selectedId = null; plan = null; report = null; ending = false; ambush = '';
+    selectedId = null; plan = null; report = null; ending = false; ambush = ''; openMenu = null;
     Store.changed();
     render(root);
     fitToScreen();
@@ -112,8 +122,7 @@
     const wrap = els.center && els.center.querySelector('.board-wrap');
     if (!cb || !wrap) return;
     const map = mapOf(cb);
-    const pad = 26;
-    const fit = Math.floor(Math.min((wrap.clientWidth - pad) / map.cols, (wrap.clientHeight - pad) / map.rows));
+    const fit = Math.floor(Math.min((wrap.clientWidth - 26) / map.cols, (wrap.clientHeight - 26) / map.rows));
     act(() => { map.cell = Math.max(16, Math.min(90, fit)); });
   }
 
@@ -139,6 +148,16 @@
     place(cb.combatants.filter(c => c.kind === 'enemy'), true);
   }
 
+  // Keep tokens on the grid after it shrinks.
+  function keepOnGrid(cb, map) {
+    for (const c of cb.combatants) {
+      if (c.x == null) continue;
+      const [fw, fh] = Combat.footprint(c);
+      c.x = Math.max(0, Math.min(map.cols - fw, c.x));
+      c.y = Math.max(0, Math.min(map.rows - fh, c.y));
+    }
+  }
+
   // ---------- Top bar ----------
 
   function drawBar(cb) {
@@ -156,7 +175,7 @@
       h('button' + (ruler ? '.on' : ''), { onclick: () => { ruler = !ruler; refresh(); }, title: 'Press and drag on the grid to measure' }, 'Ruler'),
       mapSettings(cb),
       addEnemyControl(cb),
-      h('button.ghost.danger', { onclick: () => { ending = true; refresh(); } }, 'End combat'));
+      h('button.ghost.danger', { onclick: () => { ending = true; plan = null; refresh(); } }, 'End combat'));
   }
 
   function nextTurn() {
@@ -171,8 +190,7 @@
 
   function endPhase() {
     const cb = combat();
-    const a = activeCombatant(cb);
-    if (a && !confirm('Not everyone has acted yet. End the phase anyway?')) return;
+    if (activeCombatant(cb) && !confirm('Not everyone has acted yet. End the phase anyway?')) return;
     plan = null;
     act(() => {
       report = { phase: Combat.inSurprise(cb) ? 'Surprise phase' : 'Phase ' + cb.phase, lines: Combat.endPhase(cb) };
@@ -181,36 +199,39 @@
     });
   }
 
-  function mapSettings(cb) {
-    const map = mapOf(cb);
-    const num = (label, key, min, max) => h('label.field', label,
-      h('input', { type: 'number', min, max, value: map[key], onchange: e => act(() => {
-        map[key] = Math.max(min, Math.min(max, parseInt(e.target.value, 10) || map[key]));
-      }) }));
-    const upload = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: e => uploadImage(cb, e.target.files[0]) });
-    const d = h('details.menu', { open: mapOpen, ontoggle: e => { mapOpen = e.target.open; } },
-      h('summary', 'Map'),
-      h('div.menu-body',
-        h('div.menu-grid',
-          num('Columns', 'cols', 4, 120),
-          num('Rows', 'rows', 4, 120)),
-        h('label.field', 'Zoom',
-          h('input', { type: 'range', min: 16, max: 90, value: map.cell, oninput: e => { map.cell = +e.target.value; refreshGridOnly(); }, onchange: () => act(() => {}) })),
-        h('button.ghost', { onclick: fitToScreen }, 'Fit to screen'),
-        h('label.field', 'Grid lines',
-          h('input', { type: 'range', min: 0, max: 1, step: 0.05, value: map.lineOpacity, oninput: e => { map.lineOpacity = +e.target.value; refreshGridOnly(); }, onchange: () => act(() => {}) })),
-        h('div.row',
-          h('button', { onclick: () => upload.click() }, map.imageKey ? 'Replace map image' : 'Upload map image'),
-          map.imageKey ? h('button.ghost', { onclick: () => removeImage(cb) }, 'Remove image') : null,
-          upload),
-        map.imageKey ? h('button.ghost', { onclick: () => fitRowsToImage(cb) }, 'Match rows to the image shape') : null,
-        h('button.ghost', { onclick: () => act(() => { cb.combatants.forEach(c => { c.x = null; c.y = null; }); autoPlace(cb, map); }) }, 'Line tokens up again')));
-    return d;
+  function menu(id, label, body) {
+    return h('details.menu', {
+      open: openMenu === id,
+      ontoggle: e => {
+        if (e.target.open) { openMenu = id; els.bar.querySelectorAll('details.menu').forEach(d => { if (d !== e.target) d.open = false; }); }
+        else if (openMenu === id) openMenu = null;
+      }
+    }, h('summary', label), h('div.menu-body', body));
   }
 
-  function refreshGridOnly() {
-    const cb = combat();
-    grid.update({ map: mapOf(cb), combatants: cb.combatants, selectedId, activeId: (activeCombatant(cb) || {}).id, ruler });
+  function mapSettings(cb) {
+    const map = mapOf(cb);
+    const num = (label, key) => h('label.field', label,
+      h('input', { type: 'number', min: 4, max: 120, value: map[key], onchange: e => act(() => {
+        map[key] = Math.max(4, Math.min(120, parseInt(e.target.value, 10) || map[key]));
+        keepOnGrid(cb, map);
+      }) }));
+    const upload = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: e => uploadImage(cb, e.target.files[0]) });
+    return menu('map', 'Map', [
+      h('div.menu-grid', num('Columns', 'cols'), num('Rows', 'rows')),
+      h('label.field', 'Zoom',
+        h('input', { type: 'range', min: 16, max: 90, value: map.cell, oninput: e => { map.cell = +e.target.value; drawGrid(cb); }, onchange: () => Store.changed() })),
+      h('label.field', 'Grid lines',
+        h('input', { type: 'range', min: 0, max: 1, step: 0.05, value: map.lineOpacity, oninput: e => { map.lineOpacity = +e.target.value; drawGrid(cb); }, onchange: () => Store.changed() })),
+      h('div.row',
+        h('button.ghost', { onclick: fitToScreen }, 'Fit to screen'),
+        h('button.ghost', { onclick: () => act(() => { cb.combatants.forEach(c => { c.x = null; c.y = null; }); autoPlace(cb, map); }) }, 'Line up tokens')),
+      h('div.row',
+        h('button', { onclick: () => upload.click() }, map.imageKey ? 'Replace image' : 'Upload map image'),
+        map.imageKey ? h('button.ghost', { onclick: () => removeImage(cb) }, 'Remove image') : null,
+        upload),
+      map.imageKey ? h('button.ghost', { onclick: () => fitRowsToImage(cb) }, 'Match rows to the image') : null
+    ]);
   }
 
   async function uploadImage(cb, file) {
@@ -219,8 +240,7 @@
     const key = 'map-' + holder.id;
     await Store.images.put(key, file);
     Grid.forgetImage(key);
-    const map = mapOf(cb);
-    map.imageKey = key;
+    mapOf(cb).imageKey = key;
     await fitRowsToImage(cb);
     toast('Map image added. Set Columns to the number of squares across the map.', 'good');
   }
@@ -232,7 +252,10 @@
     const img = new Image();
     img.src = url;
     await img.decode();
-    act(() => { map.rows = Math.max(4, Math.round(map.cols * img.naturalHeight / img.naturalWidth)); });
+    act(() => {
+      map.rows = Math.max(4, Math.round(map.cols * img.naturalHeight / img.naturalWidth));
+      keepOnGrid(cb, map);
+    });
   }
 
   async function removeImage(cb) {
@@ -247,19 +270,18 @@
     const select = h('select', { 'aria-label': 'Creature' },
       GameData.all().slice().sort((a, b) => a.name.localeCompare(b.name))
         .map(n => h('option', { value: n.name }, n.name + ' (' + n.role + ', Lv ' + n.level + ')')));
-    return h('details.menu', { open: addOpen, ontoggle: e => { addOpen = e.target.open; } },
-      h('summary', 'Add enemy'),
-      h('div.menu-body',
-        h('p.muted.small', 'Reinforcements join the turn order at their initiative.'),
-        select,
-        h('div.row', h('button.primary', {
-          onclick: () => act(() => {
-            const c = Combat.addEnemy(cb, GameData.find(select.value));
-            autoPlace(cb, mapOf(cb));
-            selectedId = c.id;
-            Combat.log(cb, c.name + ' joins the fight.');
-          })
-        }, 'Add'))));
+    return menu('add', 'Add enemy', [
+      h('p.muted.small', 'Reinforcements join the turn order at their initiative.'),
+      select,
+      h('button.primary', {
+        onclick: () => act(() => {
+          const c = Combat.addEnemy(cb, GameData.find(select.value));
+          autoPlace(cb, mapOf(cb));
+          selectedId = c.id;
+          Combat.log(cb, c.name + ' joins the fight.');
+        })
+      }, 'Add')
+    ]);
   }
 
   // ---------- Left column ----------
@@ -284,6 +306,7 @@
     const isActive = i === cb.turn;
     const out = !Combat.canAct(cb, e);
     const stackCount = Object.values(c.stacks).reduce((t, s) => t + s.n, 0);
+    const effects = c.conditions.length + c.effects.length;
     return h('div.turn-row', {
       class: [c.kind, isActive && 'active', c.id === selectedId && 'selected', out && 'out'].filter(Boolean).join(' '),
       onclick: () => { selectedId = c.id; refresh(); }
@@ -292,8 +315,8 @@
       h('span.turn-name', c.name,
         c.dead ? h('span.badge.bad', c.kind === 'player' ? 'dead' : 'defeated') : null,
         Combat.isDowned(c) && !c.dead ? h('span.badge.bad', c.stabilized ? 'stable' : 'downed ' + c.deathClock) : null,
-        stackCount ? h('span.badge', stackCount + ' st') : null,
-        c.conditions.length ? h('span.badge', c.conditions.length + ' cond') : null),
+        stackCount ? h('span.badge', stackCount + ' stacks') : null,
+        effects ? h('span.badge', effects + (effects === 1 ? ' effect' : ' effects')) : null),
       hpMini(c),
       h('span.order-btns',
         h('button.icon.ghost.tiny', { title: 'Move up', onclick: ev => { ev.stopPropagation(); act(() => Combat.moveEntry(cb, i, -1)); } }, '▲'),
@@ -313,24 +336,23 @@
     const enemies = cb.combatants.filter(c => c.kind === 'enemy');
     return h('div.card',
       h('h3', 'Initiative'),
-      h('p.muted.small', 'Players roll D10 + Perception; type in each result. Enemies have 5 + Perception.'),
+      h('p.muted.small', 'Type each player\'s D10 + Perception roll. Enemies have 5 + Perception.'),
       players.map(c => h('div.init-row',
         h('span', c.name),
         h('input', { type: 'number', value: c.init ?? '', placeholder: '—', 'aria-label': c.name + ' initiative',
-          onchange: e => { c.init = e.target.value === '' ? null : parseInt(e.target.value, 10); Store.changed(); } }),
-        h('button.ghost.small', { title: 'Roll D10 + Perception for this player', onclick: () => act(() => { c.init = Combat.die(10) + (c.stats.PER || 0); }) }, 'Roll'))),
+          onchange: e => { c.init = e.target.value === '' ? null : parseInt(e.target.value, 10); Store.changed(); } }))),
       enemies.map(c => h('div.init-row', h('span', c.name), h('strong', String(Combat.initiativeOf(c))))),
       h('label.field', 'Ambush',
-        h('select', { onchange: e => { ambush = e.target.value; } },
+        h('select', { onchange: e => { ambush = e.target.value; refresh(); } },
           h('option', { value: '', selected: ambush === '' }, 'No ambush'),
-          h('option', { value: 'player', selected: ambush === 'player' }, 'Players ambush (surprise phase first)'),
-          h('option', { value: 'enemy', selected: ambush === 'enemy' }, 'Enemies ambush (surprise phase first)'))),
-      ambush ? h('p.muted.small', 'Ambushed characters can not use Defensive or Quick abilities in the surprise phase.') : null,
-      h('p.muted.small', 'Drag tokens into position on the grid before you begin.'),
+          h('option', { value: 'player', selected: ambush === 'player' }, 'Players ambush'),
+          h('option', { value: 'enemy', selected: ambush === 'enemy' }, 'Enemies ambush'))),
+      ambush ? h('p.muted.small', 'The ambushers get a surprise phase first. Ambushed characters can not use Defensive or Quick abilities in it.') : null,
+      h('p.muted.small', 'Drag tokens into position before you begin.'),
       h('button.primary', {
         onclick: () => {
           const missing = players.filter(c => c.init == null);
-          if (missing.length && !confirm(missing.map(c => c.name).join(', ') + ' has no initiative yet. Count it as 0?')) return;
+          if (missing.length && !confirm('No initiative for ' + missing.map(c => c.name).join(', ') + '. Count it as 0?')) return;
           act(() => {
             Combat.begin(cb, ambush || null);
             const a = activeCombatant(cb);
@@ -352,35 +374,38 @@
       h('div.detail-head',
         h('div', h('h2', c.name),
           h('div.muted.small', c.kind === 'player'
-            ? 'Player · Level ' + c.level
-            : c.role + ' · Level ' + c.level + ' · ' + c.size + ' · ' + c.tactics + ' tactics' + (c.turnsPerPhase > 1 ? ' · 2 turns per phase' : ''))),
+            ? 'Player · Level ' + c.level + ' · Armor ' + (c.armor || 0) + ' · Move ' + Combat.movement(c) + 'M'
+            : c.role + ' · Level ' + c.level + ' · ' + c.tactics + ' tactics' + (c.turnsPerPhase > 1 ? ' · 2 turns per phase' : ''))),
         isActive ? h('span.tag.big', 'Their turn') : null),
       hpBlock(cb, c, npc),
-      isActive && Object.keys(c.stacks).length ? h('p.reminder', 'Start of turn: roll recovery for each stack type below.') : null,
-      npc ? enemyTurnBox(cb, c, npc, isActive) : null,
-      attackBox(cb, c),
-      statsBlock(cb, c, npc),
-      stacksBlock(cb, c),
-      conditionsBlock(cb, c),
-      effectsBlock(cb, c),
-      npc && !npc.humanoid ? abilitiesBlock(cb, c, npc) : null,
-      notesBlock(c),
-      h('div.row',
+      npc ? [
+        attackSection(cb, c, npc, isActive),
+        enemyStats(c, npc),
+        stacksSection(cb, c, isActive),
+        effectsSection(cb, c)
+      ] : null,
+      h('div.row.panel-foot',
         Combat.FOOTPRINT[c.size] && Combat.FOOTPRINT[c.size][0] !== Combat.FOOTPRINT[c.size][1]
-          ? h('button.ghost', { onclick: () => act(() => { c.rotated = !c.rotated; }) }, 'Turn token sideways') : null,
-        h('button.ghost.danger', {
+          ? h('button.ghost.small', { onclick: () => act(() => { c.rotated = !c.rotated; keepOnGrid(cb, mapOf(cb)); }) }, 'Turn sideways') : null,
+        h('button.ghost.danger.small', {
           onclick: () => {
             if (!confirm('Remove ' + c.name + ' from this combat?')) return;
-            act(() => {
-              const active = Combat.activeEntry(cb);
-              cb.combatants = cb.combatants.filter(x => x !== c);
-              cb.order = cb.order.filter(e => e.cid !== c.id);
-              cb.turn = active && active.cid !== c.id ? cb.order.indexOf(active) : Math.min(cb.turn, cb.order.length);
-              selectedId = null;
-            });
+            act(() => removeCombatant(cb, c));
           }
         }, 'Remove from combat')));
   }
+
+  function removeCombatant(cb, c) {
+    const active = Combat.activeEntry(cb);
+    cb.combatants = cb.combatants.filter(x => x !== c);
+    cb.order = cb.order.filter(e => e.cid !== c.id);
+    if (active && active.cid !== c.id) cb.turn = cb.order.indexOf(active);
+    else if (cb.phase > 0) { cb.turn--; Combat.nextTurn(cb); }
+    selectedId = null;
+    plan = null;
+  }
+
+  // ---- HP: players take damage as told; enemies take strikes after armor ----
 
   function hpBlock(cb, c, npc) {
     if (c.hp == null) {
@@ -393,296 +418,294 @@
         }) }), 'Defeated'));
     }
     const pct = c.maxHp ? Math.max(0, Math.min(1, c.hp / c.maxHp)) : 1;
-    const amount = h('input.amount', { type: 'number', min: 0, placeholder: 'Amount', 'aria-label': 'Amount' });
-    const val = () => Math.max(0, parseInt(amount.value, 10) || 0);
+    const enemy = c.kind === 'enemy';
+    const amount = h('input.amount', { placeholder: enemy ? 'Strikes: 7, 5' : 'Amount', 'aria-label': 'Amount' });
+    const ap = h('input.tiny-num', { type: 'number', min: 0, value: 0, title: 'AP' });
+    const noArmor = h('input', { type: 'checkbox' });
+    const dodge = h('input', { type: 'checkbox' });
+    const preview = h('span.preview');
+    const numbers = () => amount.value.split(/[^0-9]+/).filter(Boolean).map(Number);
+    const opts = () => ({ strikes: numbers(), ap: +ap.value || 0, ignoreArmor: noArmor.checked, failedDodge: dodge.checked });
+    const options = enemy ? h('div.row.small', { hidden: true },
+      h('label.inline', 'AP', ap),
+      h('label.check', noArmor, 'Ignores armor'),
+      h('label.check', dodge, 'Failed dodge'),
+      preview) : null;
+    // The armor options only appear once damage is being typed.
+    const update = () => {
+      if (!enemy) return;
+      const o = opts();
+      options.hidden = !amount.value.trim();
+      preview.textContent = o.strikes.length ? '→ ' + Combat.computeDamage(c, o).total + ' after armor' : '';
+    };
+    [amount, ap, noArmor, dodge].forEach(el => el.addEventListener('input', update));
+    const hit = () => {
+      const o = opts();
+      if (!o.strikes.length) return;
+      if (enemy) act(() => Combat.applyAttack(cb, c, o));
+      else act(() => {
+        const total = o.strikes.reduce((a, b) => a + b, 0);
+        Combat.hurt(cb, c, total, true);
+        Combat.log(cb, c.name + ' takes ' + total + '.');
+      });
+    };
+    const heal = () => {
+      const total = numbers().reduce((a, b) => a + b, 0);
+      if (total) act(() => { Combat.heal(cb, c, total); Combat.log(cb, c.name + ' heals ' + total + '.'); });
+    };
+    amount.addEventListener('keydown', e => { if (e.key === 'Enter') hit(); });
+
     let status = null;
     if (c.dead) {
-      status = h('div.status.bad', c.kind === 'player' ? 'Dead.' : 'Defeated.',
+      status = h('div.status', c.kind === 'player' ? 'Dead.' : 'Defeated.',
         h('button.ghost.small', { onclick: () => act(() => {
           c.dead = false;
-          if (c.kind === 'player' && c.hp <= 0) { c.deathClock = Combat.DEATH_CLOCK; }
-          if (c.kind === 'enemy' && c.hp <= 0) c.hp = 1;
+          if (c.hp <= 0) {
+            if (c.kind === 'player') { c.deathClock = Combat.DEATH_CLOCK; c.stabilized = false; } else c.hp = 1;
+          }
           Combat.log(cb, c.name + ' is back (GM).');
         }) }, 'Undo'));
     } else if (Combat.isDowned(c)) {
-      status = h('div.status.bad',
-        c.stabilized ? 'Downed and stabilized.' : 'Downed. Death clock: ' + c.deathClock + ' phase' + (c.deathClock === 1 ? '' : 's') + '.',
-        h('p.small.muted', 'No actions. Each hit removes a phase. An adjacent ally can stabilize with a Standard action and a Knowledge check of 6+.'),
-        h('div.row',
-          !c.stabilized ? h('button', { onclick: () => act(() => Combat.stabilize(cb, c)) }, 'Stabilized') : null,
-          !c.stabilized ? h('button.ghost', { onclick: () => act(() => {
-            c.deathClock--;
-            if (c.deathClock <= 0) { c.dead = true; Combat.log(cb, c.name + ' dies.'); }
-          }) }, 'Remove a phase') : null));
+      status = h('div.status',
+        h('strong', c.stabilized ? 'Downed, stabilized.' : 'Downed. Death clock: ' + c.deathClock + ' phase' + (c.deathClock === 1 ? '' : 's') + '.'),
+        h('p.small.muted', 'Each hit removes a phase. An adjacent ally stabilizes with a Standard action and a Knowledge check of 6+.'),
+        !c.stabilized ? h('button.small', { onclick: () => act(() => Combat.stabilize(cb, c)) }, 'Stabilized') : null);
     }
     return h('div.section.hp-block',
       h('div.hp-big', String(c.hp), h('span.muted', ' / ' + c.maxHp + ' HP')),
       h('div.hp-bar', h('span', { style: 'width:' + pct * 100 + '%', class: pct <= 0.25 ? 'low' : '' })),
-      h('div.row',
-        amount,
-        h('button', { title: 'Take this much damage (no armor)', onclick: () => val() && act(() => { Combat.hurt(cb, c, val(), true); Combat.log(cb, c.name + ' takes ' + val() + ' damage.'); }) }, 'Damage'),
-        h('button', { title: 'Heal this much', onclick: () => val() && act(() => { Combat.heal(cb, c, val()); Combat.log(cb, c.name + ' heals ' + val() + '.'); }) }, 'Heal'),
-        h('button.ghost', { title: 'Set HP to this number', onclick: () => amount.value !== '' && act(() => {
-          const before = c.hp;
-          c.hp = parseInt(amount.value, 10);
-          if (c.hp > 0 && before <= 0) Combat.heal(cb, c, 0);
-          else if (c.hp <= 0 && before > 0) { c.hp = before; Combat.hurt(cb, c, before - parseInt(amount.value, 10), false); }
-        }) }, 'Set')),
+      h('div.row', amount,
+        h('button', { onclick: hit }, enemy ? 'Hit' : 'Damage'),
+        h('button.ghost', { onclick: heal }, 'Heal')),
+      options,
       status);
   }
 
-  // ---- Damage from an attack (players' attacks, humanoids, anything typed in) ----
+  // ---- Enemy attacks: pick an ability, aim, roll, confirm ----
 
-  function attackBox(cb, c) {
-    if (c.hp == null) return null;
-    const strikes = h('input', { placeholder: 'e.g. 7, 5', 'aria-label': 'Strike damage' });
-    const ap = h('input', { type: 'number', min: 0, value: 0, 'aria-label': 'AP' });
-    const ignore = h('input', { type: 'checkbox' });
-    const dodge = h('input', { type: 'checkbox' });
-    const block = h('input', { type: 'number', min: 0, value: 0, 'aria-label': 'Block' });
-    const resist = h('input', { type: 'number', min: 0, max: 75, value: c.resist || 0, 'aria-label': 'Resistance %' });
-    const preview = h('span.preview');
-    const opts = () => ({
-      strikes: strikes.value.split(/[^0-9]+/).filter(Boolean).map(Number),
-      ap: +ap.value || 0, ignoreArmor: ignore.checked, failedDodge: dodge.checked,
-      block: +block.value || 0, resist: +resist.value || 0
-    });
-    const update = () => {
-      const o = opts();
-      if (!o.strikes.length) { preview.textContent = ''; return; }
-      const r = Combat.computeDamage(c, o);
-      preview.textContent = 'Takes ' + r.total + (o.strikes.length > 1 ? ' (' + r.perStrike.join(' + ') + ' after armor)' : '');
-    };
-    [strikes, ap, ignore, dodge, block, resist].forEach(el => el.addEventListener('input', update));
-    return h('details.section', { open: c.kind === 'enemy' && (!activeCombatant(cb) || activeCombatant(cb).kind === 'player') },
-      h('summary', h('h3', 'Hit with an attack')),
-      h('p.muted.small', 'Type each strike\'s damage. Armor (' + (c.armor || 0) + ') comes off each strike, less any AP.'),
-      h('div.attack-grid',
-        h('label.field.wide', 'Strikes', strikes),
-        h('label.field', 'AP', ap),
-        h('label.field', 'Block', block),
-        h('label.field', 'Resist %', resist),
-        h('label.check.small', ignore, 'Ignores armor'),
-        h('label.check.small', dodge, 'Failed dodge (×1.5)')),
-      h('div.row',
-        h('button.primary', {
-          onclick: () => {
-            const o = opts();
-            if (!o.strikes.length) return toast('Type the damage of each strike first.', 'bad');
-            act(() => {
-              const r = Combat.applyAttack(cb, c, o);
-              toast(c.name + ' takes ' + r.total + '.');
-            });
-          }
-        }, 'Apply'),
-        preview));
+  const aiming = () => plan && (plan.manual != null || (plan.ability && plan.ability.attack));
+  const isTarget = t => t && plan && t.id !== plan.cid && t.kind === 'player' && !t.dead && t.hp != null;
+
+  function planFor(c) {
+    if (!plan || plan.cid !== c.id) plan = { cid: c.id, ability: null, tactic: null, targets: {}, roll: null, manual: null, ap: 0 };
+    return plan;
   }
 
-  // ---- Enemy turn: tactics roll, ability, damage, targets ----
-
-  function enemyTurnBox(cb, c, npc, isActive) {
-    if (npc.humanoid) {
-      return h('div.section.turn-box' + (isActive ? '.live' : ''),
-        h('h3', 'Combat skill'),
-        h('p.small', npc.combatSkill),
-        h('p.muted.small', 'Resolve its attack from the Skill Guide, then use "Hit with an attack" on the target to apply the damage.'));
+  function toggleTarget(id) {
+    const area = plan.manual == null && plan.ability.attack.area;
+    if (plan.targets[id]) delete plan.targets[id];
+    else {
+      if (!area && plan.manual == null) plan.targets = {};
+      plan.targets[id] = { def: 'none', block: 0 };
     }
-    if (c.dead || cb.phase === 0) return null;
-    const mine = plan && plan.cid === c.id ? plan : null;
-    if (!mine) {
-      return h('div.section.turn-box' + (isActive ? '.live' : ''),
-        h('h3', 'Enemy turn'),
-        h('div.row',
-          h('button' + (isActive ? '.primary' : ''), { onclick: () => rollTactics(cb, c, npc) }, 'Roll tactics (D20)'),
-          h('span.muted.small', 'or choose an ability below')));
-    }
-    const ch = mine.choice;
-    const a = ch.ability;
-    const parts = [h('h3', 'Enemy turn')];
-    if (ch.d20) parts.push(h('p', 'D20: ', h('strong', String(ch.d20)), ' → ', h('span.rarity.rarity-' + ch.rolled.toLowerCase(), ch.rolled)));
-    ch.notes.forEach(n => parts.push(h('p.small.muted', n)));
-    if (!a) {
-      parts.push(h('div.row', h('button', { onclick: () => { plan = null; refresh(); } }, 'OK')));
-      return h('div.section.turn-box.live', parts);
-    }
-    parts.push(h('div.ability-pick',
-      h('span.rarity.rarity-' + a.rarity.toLowerCase(), a.rarity), ' ', h('strong', a.name),
-      a.attack && a.attack.area ? h('span.tag', 'area') : null,
-      h('p.small', a.text)));
-    if (!a.attack) {
-      parts.push(h('div.row',
-        h('button.primary', { onclick: () => finishAbility(cb, c, a, c.name + ' uses ' + a.name + '.') }, 'Done'),
-        h('button.ghost', { onclick: () => rollTactics(cb, c, npc) }, 'Reroll'),
-        h('button.ghost', { onclick: () => { plan = null; refresh(); } }, 'Cancel')));
-      return h('div.section.turn-box.live', parts);
-    }
-    if (!mine.attack) {
-      parts.push(h('div.row',
-        h('button.primary', { onclick: () => { mine.attack = Combat.rollAttack(a.attack); refresh(); } }, 'Roll damage'),
-        h('button.ghost', { onclick: () => rollTactics(cb, c, npc) }, 'Reroll'),
-        h('button.ghost', { onclick: () => { plan = null; refresh(); } }, 'Cancel')));
-      return h('div.section.turn-box.live', parts);
-    }
-    const atk = mine.attack;
-    parts.push(h('ul.strikes', atk.strikes.map((s, i) => h('li',
-      'Strike ' + (i + 1) + ': ', h('strong', String(s.value)),
-      h('span.muted', ' (' + s.dice.join(' + ') + (s.flat ? ' + ' + s.flat : '') + ')' + (s.failed ? ' all 1s, misses' : ''))))));
-    if (atk.ap || atk.ignoreArmor) parts.push(h('p.small.muted', atk.ignoreArmor ? 'Ignores armor.' : 'AP ' + atk.ap + '.'));
-    // Targets: the other side, nearest first.
-    const foes = cb.combatants.filter(t => t.kind !== c.kind && !t.dead && t.hp != null);
-    const dist = t => (c.x != null && t.x != null) ? Combat.distance(c.x, c.y, t.x, t.y) : null;
-    foes.sort((x, y) => (dist(x) ?? 999) - (dist(y) ?? 999));
-    parts.push(h('p.small', 'Targets', atk.area ? ' (area: tick everyone it hits)' : '', ':'));
-    parts.push(h('div.targets', foes.map(t => {
-      const st = mine.targets[t.id] || (mine.targets[t.id] = { on: false, dodge: false, block: 0 });
-      const r = Combat.computeDamage(t, { strikes: atk.strikes.map(s => s.value), ap: atk.ap, ignoreArmor: atk.ignoreArmor, failedDodge: st.dodge, block: st.block, resist: t.resist });
-      return h('div.target-row' + (st.on ? '.on' : ''),
-        h('label.check', h('input', { type: 'checkbox', checked: st.on, onchange: e => { st.on = e.target.checked; refresh(); } }),
-          h('strong', t.name), dist(t) != null ? h('span.muted.small', ' ' + dist(t) + 'M') : null),
-        h('label.check.small', h('input', { type: 'checkbox', checked: st.dodge, onchange: e => { st.dodge = e.target.checked; refresh(); } }), 'failed dodge'),
-        h('label.small.inline', 'block', h('input.tiny-num', { type: 'number', min: 0, value: st.block, onchange: e => { st.block = +e.target.value || 0; refresh(); } })),
-        h('span.preview', '→ ' + r.total));
-    })));
-    parts.push(h('div.row',
-      h('button.primary', {
-        onclick: () => {
-          const chosen = foes.filter(t => mine.targets[t.id] && mine.targets[t.id].on);
-          if (!chosen.length) return toast('Tick a target, or press "Missed" if the attack was dodged.', 'bad');
-          act(() => {
-            for (const t of chosen) {
-              const st = mine.targets[t.id];
-              Combat.applyAttack(cb, t, { strikes: atk.strikes.map(s => s.value), ap: atk.ap, ignoreArmor: atk.ignoreArmor, failedDodge: st.dodge, block: st.block, resist: t.resist }, c.name + "'s " + a.name);
-            }
-            Combat.markUsed(cb, c, a);
-            plan = null;
-          });
-        }
-      }, 'Apply damage'),
-      h('button.ghost', { onclick: () => finishAbility(cb, c, a, c.name + "'s " + a.name + ' misses.') }, 'Missed'),
-      h('button.ghost', { onclick: () => { mine.attack = Combat.rollAttack(a.attack); refresh(); } }, 'Reroll damage')));
-    return h('div.section.turn-box.live', parts);
-  }
-
-  function rollTactics(cb, c, npc) {
-    plan = { cid: c.id, choice: Combat.chooseAbility(cb, c, npc), attack: null, targets: {} };
-    selectedId = c.id;
     refresh();
   }
 
-  function finishAbility(cb, c, a, text) {
-    act(() => {
-      Combat.markUsed(cb, c, a);
-      Combat.log(cb, text);
-      plan = null;
-    });
-  }
+  function attackSection(cb, c, npc, isActive) {
+    if (cb.phase === 0 || c.dead) return null;
+    const p = planFor(c);
+    const disabled = Combat.isDowned(c);
+    const parts = [h('div.card-head', h('h3', 'Attack'),
+      !npc.humanoid ? h('button' + (isActive && !p.ability ? '.primary' : '') + '.small', {
+        title: 'Roll a D20 on the tactics table to pick an ability',
+        onclick: () => {
+          const ch = Combat.chooseAbility(cb, c, npc);
+          Object.assign(p, { ability: ch.ability, tactic: ch, roll: null });
+          refresh();
+        }
+      }, 'Roll tactics') : null)];
 
-  function abilitiesBlock(cb, c, npc) {
-    return h('details.section', { open: false },
-      h('summary', h('h3', 'Abilities')),
-      h('ul.abilities', (npc.abilities || []).map(a => {
+    if (npc.humanoid) {
+      // Humanoids use player skills: the GM types the strike damage.
+      if (p.manual == null) p.manual = '';
+      parts.push(h('p.small.muted', npc.combatSkill));
+    } else {
+      if (p.tactic) {
+        parts.push(h('p.small', 'D20 ', h('strong', String(p.tactic.d20)), ' → ', p.tactic.rolled,
+          p.tactic.notes.length ? h('span.muted', '. ' + p.tactic.notes.join(' ')) : null));
+      }
+      parts.push(h('div.ability-list', (npc.abilities || []).map(a => {
         const ready = Combat.isReady(cb, c, a);
         const r = c.cooldowns[a.name];
-        return h('li' + (ready ? '' : '.cooling'),
-          h('span.rarity.rarity-' + a.rarity.toLowerCase(), a.rarity), ' ', h('strong', a.name),
-          !ready ? h('span.muted', r === 'combat' ? ' (used this combat)' : ' (ready in phase ' + r + ')') : null,
-          ' – ', a.text, ' ',
-          h('button.ghost.small', {
-            onclick: () => { plan = { cid: c.id, choice: { ability: a, notes: ['Chosen by the GM.'] }, attack: null, targets: {} }; refresh(); }
-          }, 'Use'),
-          !ready ? h('button.ghost.small', { onclick: () => act(() => { delete c.cooldowns[a.name]; }) }, 'Reset') : null);
+        const on = p.ability && p.ability.name === a.name;
+        return h('button.ability-btn' + (on ? '.on' : ''), {
+          disabled: !ready,
+          title: a.text,
+          onclick: () => { p.ability = on ? null : a; p.roll = null; p.tactic = on ? p.tactic : null; refresh(); }
+        },
+          h('span.rarity.rarity-' + a.rarity.toLowerCase(), a.rarity),
+          h('span.ability-name', a.name),
+          h('span.muted.small', !ready ? (r === 'combat' ? 'used' : 'phase ' + r) : a.attack ? 'avg ' + fmt(Rules.attackAverage(a.attack), 1) : 'effect'));
       })));
+      const cooling = (npc.abilities || []).filter(a => !Combat.isReady(cb, c, a));
+      if (cooling.length) {
+        parts.push(h('button.ghost.small', { onclick: () => act(() => { c.cooldowns = {}; }) }, 'Reset cooldowns'));
+      }
+      if (!p.ability) return h('div.section.attack' + (isActive ? '.live' : ''), parts);
+      parts.push(h('p.small.ability-text', p.ability.text));
+      if (!p.ability.attack) {
+        parts.push(h('button.primary', {
+          disabled,
+          onclick: () => act(() => {
+            Combat.markUsed(cb, c, p.ability);
+            Combat.log(cb, c.name + ' uses ' + p.ability.name + '.');
+            plan = null;
+          })
+        }, 'Use ' + p.ability.name));
+        return h('div.section.attack.live', parts);
+      }
+    }
+
+    // Targets: players, nearest first. Clicking a token on the grid also aims.
+    const foes = cb.combatants.filter(isTarget);
+    const dist = t => (c.x != null && t.x != null) ? Combat.distance(c.x, c.y, t.x, t.y) : null;
+    foes.sort((x, y) => (dist(x) ?? 999) - (dist(y) ?? 999));
+    const area = !npc.humanoid && p.ability.attack.area;
+    parts.push(h('p.small.muted', area ? 'Area attack: choose everyone it hits.' : 'Choose the target (or click its token).'));
+    parts.push(h('div.chips', foes.map(t => h('button.toggle' + (p.targets[t.id] ? '.on' : ''), { onclick: () => toggleTarget(t.id) },
+      t.name, dist(t) != null ? h('span.dist', ' ' + dist(t) + 'M') : null))));
+
+    const chosen = foes.filter(t => p.targets[t.id]);
+    const previews = [];
+    const strikesNow = () => npc.humanoid
+      ? String(p.manual).split(/[^0-9]+/).filter(Boolean).map(Number)
+      : p.roll ? p.roll.strikes.map(s => s.value) : [];
+    // Updates the damage shown per target without redrawing (keeps typing focus).
+    const updatePreviews = () => previews.forEach(({ t, el }) => {
+      el.textContent = strikesNow().length ? '−' + result(t) : '';
+    });
+    if (npc.humanoid) {
+      parts.push(h('div.row.small',
+        h('input.amount', { placeholder: 'Strikes: 7, 5', value: p.manual, 'aria-label': 'Strike damage',
+          oninput: e => { p.manual = e.target.value; updatePreviews(); } }),
+        h('label.inline', 'AP', h('input.tiny-num', { type: 'number', min: 0, value: p.ap, oninput: e => { p.ap = +e.target.value || 0; updatePreviews(); } }))));
+    }
+
+    if (!npc.humanoid) {
+      if (!p.roll) {
+        parts.push(h('button.primary', {
+          disabled: disabled || !chosen.length,
+          onclick: () => { p.roll = Combat.rollAttack(p.ability.attack); refresh(); }
+        }, chosen.length ? 'Roll ' + p.ability.name : 'Choose a target to roll'));
+        return h('div.section.attack.live', parts);
+      }
+      parts.push(h('div.roll-line',
+        p.roll.strikes.map((s, i) => h('span.strike' + (s.failed ? '.miss' : ''), { title: 'Dice: ' + s.dice.join(' + ') + (s.flat ? ' + ' + s.flat : '') },
+          String(s.value))),
+        h('span.muted.small', p.roll.ignoreArmor ? 'ignores armor' : p.roll.ap ? p.roll.ap + ' AP' : ''),
+        h('button.ghost.small', { onclick: () => { p.roll = Combat.rollAttack(p.ability.attack); refresh(); } }, 'Reroll')));
+    }
+
+    // Each target's defense and the damage it takes.
+    const opts = t => ({
+      strikes: strikesNow(), ap: npc.humanoid ? p.ap : p.roll.ap, ignoreArmor: !npc.humanoid && p.roll.ignoreArmor,
+      failedDodge: p.targets[t.id].def === 'failed', block: p.targets[t.id].def === 'block' ? p.targets[t.id].block : 0
+    });
+    const result = t => p.targets[t.id].def === 'dodged' ? 0 : Combat.computeDamage(t, opts(t)).total;
+    parts.push(h('div.targets', chosen.map(t => {
+      const st = p.targets[t.id];
+      return h('div.target-row',
+        h('strong', t.name),
+        h('select.small', { onchange: e => { st.def = e.target.value; refresh(); } },
+          DEFENSES.map(([v, label]) => h('option', { value: v, selected: st.def === v }, label))),
+        st.def === 'block' ? h('input.tiny-num', { type: 'number', min: 0, value: st.block, title: 'Block roll', oninput: e => { st.block = +e.target.value || 0; updatePreviews(); } }) : h('span'),
+        (() => { const el = h('span.preview'); previews.push({ t, el }); return el; })());
+    })));
+    updatePreviews();
+    parts.push(h('div.row',
+      h('button.primary', {
+        disabled: disabled || !chosen.length,
+        onclick: () => {
+          if (!strikesNow().length) return toast('Type the damage of each strike first.', 'bad');
+          const name = npc.humanoid ? c.name : c.name + "'s " + p.ability.name;
+          const summary = chosen.map(t => t.name + ' −' + result(t)).join(', ');
+          act(() => {
+            for (const t of chosen) {
+              if (p.targets[t.id].def === 'dodged') Combat.log(cb, t.name + ' dodges ' + name + '.');
+              else Combat.applyAttack(cb, t, opts(t), name);
+            }
+            if (!npc.humanoid) Combat.markUsed(cb, c, p.ability);
+            plan = null;
+          });
+          toast(summary);
+        }
+      }, 'Confirm hit'),
+      h('button.ghost', { onclick: () => { plan = null; refresh(); } }, 'Cancel')));
+    return h('div.section.attack.live', parts);
   }
 
-  // ---- Stats, stacks, conditions, effects, notes ----
+  // ---- Enemy details ----
 
-  function statsBlock(cb, c, npc) {
+  function enemyStats(c, npc) {
     const para = c.stacks.Paralysis ? c.stacks.Paralysis.n : 0;
-    return h('div.section.stats',
+    return h('div.section',
       h('div.stat-chips',
         h('span.chip', 'Armor ', h('strong', String(c.armor || 0))),
         h('span.chip', 'Move ', h('strong', Combat.movement(c) + 'M')),
-        cb.phase > 0 || c.kind === 'enemy' ? h('span.chip', 'Init ', h('strong', String(Combat.initiativeOf(c)))) : null,
         GameData.STATS.map(k => {
           const v = (c.stats[k] || 0) - ((k === 'STR' || k === 'AGI') ? para : 0);
-          return h('span.chip', { title: GameData.STAT_NAMES[k] }, k + ' ', h('strong' + (v !== (c.stats[k] || 0) ? '.bad' : ''), String(v)));
+          return h('span.chip', { title: GameData.STAT_NAMES[k] }, k + ' ', h('strong' + (para && (k === 'STR' || k === 'AGI') ? '.bad' : ''), String(v)));
         })),
-      npc && npc.attributes && npc.attributes !== 'None' ? h('p.small', h('strong', 'Attributes: '), npc.attributes) : null);
+      npc.attributes && npc.attributes !== 'None' ? h('p.small.muted', npc.attributes) : null);
   }
 
-  function stacksBlock(cb, c) {
+  function stacksSection(cb, c, isActive) {
+    const types = Object.keys(c.stacks);
     const effects = Combat.stackEffects(c);
+    const pick = h('select.small', { 'aria-label': 'Stack type' }, Combat.STACK_TYPES.map(t => h('option', { value: t }, t)));
     return h('div.section',
-      h('h3', 'Stacks'),
-      h('div.stack-grid', Combat.STACK_TYPES.map(type => {
+      h('div.card-head', h('h3', 'Stacks'),
+        h('div.row.tight', pick, h('button.small', { onclick: () => act(() => Combat.addStacks(c, pick.value, 1)) }, '+ Add'))),
+      isActive && types.length ? h('p.reminder', 'Start of turn: roll recovery for each stack.') : null,
+      types.map(type => {
         const s = c.stacks[type];
-        return h('div.stack' + (s ? '.has' : ''),
-          h('span.stack-name' + (Combat.DAMAGING_STACKS.includes(type) ? '.dmg' : ''), type),
-          h('button.icon.tiny', { onclick: () => act(() => Combat.addStacks(c, type, -1)) }, '−'),
-          h('span.stack-n', s ? String(s.n) : '0'),
-          h('button.icon.tiny', { onclick: () => act(() => Combat.addStacks(c, type, 1)) }, '+'),
-          s ? h('button.ghost.small', {
-            title: 'Roll a D4; needs ' + s.target + '+ (a 1 never recovers)',
+        return h('div.stack-row',
+          h('span' + (Combat.DAMAGING_STACKS.includes(type) ? '.dmg' : ''), type),
+          h('button.icon.tiny', { title: 'One fewer', onclick: () => act(() => Combat.addStacks(c, type, -1)) }, '−'),
+          h('strong', String(s.n)),
+          h('button.icon.tiny', { title: 'One more', onclick: () => act(() => Combat.addStacks(c, type, 1)) }, '+'),
+          h('button.ghost.small', {
+            title: 'Roll a D4; a 1 never recovers',
             onclick: () => act(() => {
               const r = Combat.recover(c, type);
-              const text = c.name + ' ' + type + ' recovery: rolled ' + r.roll + ' (needs ' + r.target + '+), ' +
+              const text = c.name + ' ' + type + ': rolled ' + r.roll + ' (needs ' + r.target + '+), ' +
                 (r.success ? 'loses ' + r.lost + (r.left ? ', ' + r.left + ' left' : ', cleared') : 'no recovery') + '.';
               Combat.log(cb, text);
               toast(text, r.success ? 'good' : '');
             })
-          }, 'Recover ' + s.target + '+') : null);
-      })),
-      effects.length ? h('ul.stack-effects', effects.map(e => h('li' + (e.severe ? '.bad' : ''), e.text,
+          }, 'Recover (' + s.target + '+)'));
+      }),
+      effects.map(e => h('p.small' + (e.severe ? '.bad' : ''), e.text,
         e.check ? h('button.ghost.small', {
           onclick: () => {
             const n = c.stacks[e.check].n;
             const d = Combat.die(10);
-            toast(c.name + ': Knowledge check needs ' + (d + n) + '+ (1D10 = ' + d + ', + ' + n + ' stacks).');
+            toast(c.name + ': Knowledge check needs ' + (d + n) + '+ (D10 ' + d + ' + ' + n + ').');
           }
-        }, 'Roll target') : null))) : null,
-      h('p.muted.small', 'Bleed, Flame, Poison, and Acid deal 1D4 per stack at the end of the phase, ignoring armor.'));
+        }, 'Roll target') : null)));
   }
 
-  function conditionsBlock(cb, c) {
-    const custom = c.conditions.filter(x => !Combat.CONDITIONS.includes(x));
-    const input = h('input', { placeholder: 'Other condition', 'aria-label': 'Other condition' });
+  function effectsSection(cb, c) {
+    const text = h('input', { placeholder: 'Other effect', 'aria-label': 'Effect' });
+    const phases = h('input.tiny-num', { type: 'number', min: 1, placeholder: '∞', title: 'Phases (blank = until removed)' });
+    const add = () => text.value.trim() && act(() => {
+      c.effects.push({ text: text.value.trim(), phases: phases.value ? Math.max(1, parseInt(phases.value, 10)) : null });
+    });
+    text.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
     return h('div.section',
-      h('h3', 'Conditions'),
+      h('h3', 'Conditions and effects'),
       h('div.chips',
-        Combat.CONDITIONS.concat(custom).map(name => {
+        Combat.CONDITIONS.map(name => {
           const on = c.conditions.includes(name);
           return h('button.toggle' + (on ? '.on' : ''), {
-            onclick: () => act(() => {
-              c.conditions = on ? c.conditions.filter(x => x !== name) : c.conditions.concat(name);
-            })
+            onclick: () => act(() => { c.conditions = on ? c.conditions.filter(x => x !== name) : c.conditions.concat(name); })
           }, name);
-        })),
-      h('div.row', input, h('button.ghost', {
-        onclick: () => input.value.trim() && act(() => { c.conditions.push(input.value.trim()); })
-      }, 'Add')),
-      c.conditions.includes('Disoriented') ? h('p.small.muted', 'Disoriented: drops one rarity on the tactics roll; with Basic tactics it can not use abilities.') : null);
-  }
-
-  function effectsBlock(cb, c) {
-    const text = h('input', { placeholder: 'Effect (e.g. +2 armor from Shield Wall)', 'aria-label': 'Effect' });
-    const phases = h('input', { type: 'number', min: 1, placeholder: 'Phases', 'aria-label': 'Phases' });
-    return h('div.section',
-      h('h3', 'Temporary effects'),
-      c.effects.length ? h('ul.effects', c.effects.map((e, i) => h('li',
-        e.text, h('span.muted', e.phases == null ? ' (until removed)' : ' (' + e.phases + ' phase' + (e.phases === 1 ? '' : 's') + ' left)'),
-        h('button.icon.ghost.tiny', { title: 'Remove', onclick: () => act(() => { c.effects.splice(i, 1); }) }, '×')))) : null,
-      h('div.row', text, phases, h('button.ghost', {
-        onclick: () => text.value.trim() && act(() => {
-          c.effects.push({ text: text.value.trim(), phases: phases.value ? Math.max(1, parseInt(phases.value, 10)) : null });
-        })
-      }, 'Add')),
-      h('p.muted.small', 'Effects with a number of phases count down at the end of each phase.'));
-  }
-
-  function notesBlock(c) {
-    return h('div.section',
-      h('h3', 'Notes'),
-      h('textarea', { rows: 2, value: c.notes || '', onchange: e => { c.notes = e.target.value; Store.changed(); } }));
+        }),
+        c.effects.map((e, i) => h('span.toggle.on.effect',
+          e.text + (e.phases == null ? '' : ' (' + e.phases + ')'),
+          h('button.icon.ghost.tiny', { title: 'Remove', onclick: () => act(() => { c.effects.splice(i, 1); }) }, '×')))),
+      h('div.row.tight', text, phases, h('button.small', { onclick: add }, 'Add')),
+      c.conditions.includes('Disoriented') ? h('p.small.muted', 'Disoriented: the tactics roll drops one rarity; with Basic tactics it can not use abilities.') : null);
   }
 
   // ---------- Ending combat ----------
@@ -695,9 +718,8 @@
       h('h2', 'End combat'),
       h('p', 'Defeated enemies are worth ', h('strong', fmt(s.earned, 2) + ' XP'), ' of ', fmt(s.total, 2), ' in this fight.'),
       h('label.check', h('input', { type: 'checkbox', checked: xpAll, onchange: e => { xpAll = e.target.checked; refresh(); } }),
-        'Award XP for every enemy (for example, if the rest fled or surrendered)'),
+        'Count every enemy (for example, if the rest fled)'),
       s.players.length ? h('ul', s.players.map(p => h('li', p.name + ': ', h('strong', '+' + fmt(share, 2) + ' XP')))) : h('p.muted', 'No players in this combat.'),
-      h('p.muted.small', 'Ending combat clears all stacks, conditions, effects, cooldowns, and token positions.'),
       h('div.row',
         h('button.primary', {
           onclick: () => {

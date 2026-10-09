@@ -23,6 +23,11 @@ A laptop web app for running combat in **Primordium 2.0**, an original tabletop 
 ## Status (2026-10-08)
 All eight features are built. Tabs: Encounter, Combat (grid map and combat in one screen), Reference, Creatures, Save. Code layout: `js/rules.js` (scaling math) and `js/combat-engine.js` (combat rules) hold no screen code and are checked by `node tools/test-rules.js` and `node tools/test-combat.js`; each tab has its own file in `js/`.
 
+## Combat screen principles (owner feedback, 2026-10-08)
+- Players run their own characters. The GM tool only tracks their HP (and downed/death clock), position, and what it needs for movement and initiative (Speed, Perception, armor, level). Do not add player stacks, conditions, or attack tools.
+- Enemy attacks are one flow: pick an ability (or Roll tactics), pick the target (list or click its token), roll, set each target's defense, confirm.
+- Prefer fewer, smaller controls over more options.
+
 ## Open questions and working assumptions
 - **Quick and Defensive enemy abilities:** the NPC data does not mark ability type yet. Until it does, treat every enemy ability as a Standard ability (rolled on the tactics table). Abilities accept an optional `type` field (the creature builder sets it).
 - The owner's rulings (diagonals, Boss turns, recovery, rounding, defeat at 0 HP, damage order, cooldowns, Boss budgets, race stat order) are in `docs/rules.md` under "GM rulings".

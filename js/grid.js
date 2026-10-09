@@ -26,7 +26,7 @@
 
   // cb: { onSelect(id), onMove(id, x, y) }
   function create(host, cb) {
-    let o = null;            // { map, combatants, selectedId, activeId, ruler }
+    let o = null;            // { map, combatants, selectedId, activeId, ruler, targetIds }
     let drag = null;
     let rulerLine = null;    // { ax, ay, bx, by }
     const img = h('img.board-image', { alt: '', draggable: 'false' });
@@ -73,6 +73,7 @@
         title: c.name + (c.hp != null ? ' (' + c.hp + (c.maxHp ? '/' + c.maxHp : '') + ' HP)' : ''),
         class: [
           c.id === o.selectedId && 'selected', c.id === o.activeId && 'active',
+          (o.targetIds || []).includes(c.id) && 'targeted',
           Combat.isDowned(c) && 'downed', c.dead && 'dead', fw * fh > 1 && 'big'
         ].filter(Boolean).join(' ')
       },

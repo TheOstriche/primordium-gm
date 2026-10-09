@@ -200,9 +200,8 @@
         h('label.check',
           h('input', { type: 'checkbox', checked: enc.partyIds.includes(p.id), onchange: e => toggle(p.id, e.target.checked) }),
           h('strong', p.name)),
-        h('span.muted.small', 'Lv ' + p.level + ' · ' + p.hp + ' HP · ' + p.armor + ' armor · ' +
-          GameData.STATS.map(k => k + ' ' + (p.stats[k] ?? 0)).join(' ') +
-          (p.xp ? ' · ' + fmt(p.xp, 2) + ' XP' : '')),
+        h('span.muted.small', 'Lv ' + p.level + ' · ' + p.hp + ' HP · ' + p.armor + ' armor · Speed ' +
+          (p.stats.SPD ?? 0) + ' · Perception ' + (p.stats.PER ?? 0) + (p.xp ? ' · ' + fmt(p.xp, 2) + ' XP' : '')),
         h('button.ghost', { onclick: () => { editingPlayerId = p.id; drawParty(); } }, 'Edit'))),
       players.length ? h('div.row',
         h('button.ghost', { onclick: () => { enc.partyIds = players.map(p => p.id); Store.changed(); drawEncounter(); } }, 'Select all'),
@@ -220,8 +219,8 @@
       num('Level', 'level', d.level),
       num('HP', 'hp', d.hp),
       num('Armor', 'armor', d.armor),
-      GameData.STATS.map(k => h('label.field', { title: GameData.STAT_NAMES[k] }, k,
-        h('input', { type: 'number', name: 'stat-' + k, value: d.stats[k] ?? 0 }))),
+      h('label.field', { title: 'Movement is 5 + Speed' }, 'Speed', h('input', { type: 'number', name: 'stat-SPD', value: d.stats.SPD ?? 0 })),
+      h('label.field', { title: 'Breaks initiative ties' }, 'Perception', h('input', { type: 'number', name: 'stat-PER', value: d.stats.PER ?? 0 })),
       h('div.row.wide',
         h('button.primary', { type: 'submit' }, isNew ? 'Add player' : 'Save'),
         h('button.ghost', { type: 'button', onclick: () => { editingPlayerId = null; drawParty(); } }, 'Cancel'),
@@ -246,8 +245,7 @@
       rec.level = Math.max(1, n('level'));
       rec.hp = n('hp');
       rec.armor = n('armor');
-      rec.stats = {};
-      GameData.STATS.forEach(k => { rec.stats[k] = n('stat-' + k); });
+      rec.stats = Object.assign({}, rec.stats, { SPD: n('stat-SPD'), PER: n('stat-PER') });
       if (isNew) {
         S().players.push(rec);
         currentEncounter().partyIds.push(rec.id);
