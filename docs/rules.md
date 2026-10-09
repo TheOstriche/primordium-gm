@@ -64,6 +64,12 @@ Roll a D20 on the enemy's Tactics row to set the rarity of its Standard ability 
 - Stack recovery: one D4 per stack type, each with its own target number.
 - Halving stacks rounds up (5 stacks lose 3). A failed dodge's 1.5x damage rounds down.
 - Until abilities are tagged Quick or Defensive, every enemy ability is treated as Standard.
+- Enemies are defeated at 0 HP (no death clock); only players are downed.
+- Stack damage at the end of a phase does not count as a hit on a downed character.
+- Damage order: armor per strike (less AP), then a failed dodge x1.5, then resistance, then block.
+- A cooldown of N phases means the ability is unavailable for the next N phases (used in phase P, ready in phase P + N + 1).
+- A Boss's damage budget covers both of its turns in a phase, so each ability is budgeted at half.
+- Race stat arrays are in the order Strength, Agility, Knowledge, Speed, Perception, Speech.
 
 ## Difficulty and XP
 - Enemy XP = role multiplier x (20 + 6 x level): Minion x0.25, Standard x1, Elite x3, Boss x10 (already computed in npc-data.js). The party splits XP evenly.

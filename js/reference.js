@@ -208,7 +208,6 @@
     const traits = Object.values(DATA.traits).filter(t => !state.traitCategory || t.category === state.traitCategory);
     fill(els.detail,
       h('h1', 'Races'),
-      h('p.muted.small', 'Stat order assumed: Strength, Agility, Knowledge, Speed, Perception, Speech.'),
       Object.entries(DATA.races).map(([name, r]) => h('div.entry.race', { id: 'race-' + name },
         h('div.entry-head', h('strong', name), h('span.chip', r.hp + ' HP'), r.armor ? h('span.chip', r.armor + ' armor') : null),
         h('div.sb-stats', (r.stats || []).map((v, i) => h('div', h('span.muted.small', GameData.STATS[i]), h('strong', signed(v))))),

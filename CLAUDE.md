@@ -25,14 +25,7 @@ All eight features are built. Tabs: Encounter, Combat (grid map and combat in on
 
 ## Open questions and working assumptions
 - **Quick and Defensive enemy abilities:** the NPC data does not mark ability type yet. Until it does, treat every enemy ability as a Standard ability (rolled on the tactics table). Abilities accept an optional `type` field (the creature builder sets it).
-- The owner's rulings on diagonals, Boss turns, recovery rolls, and rounding are in `docs/rules.md` ("GM rulings").
-- Assumptions not yet confirmed by the owner:
-  - Enemies are defeated at 0 HP (no death clock); only players are downed.
-  - Stack damage at the end of a phase does not count as a "hit" on a downed character.
-  - Damage order: armor per strike (less AP), then a failed dodge x1.5, then resistance, then block.
-  - Cooldown N means the ability is unavailable for the next N phases (used in phase P, ready in phase P + N + 1).
-  - Boss damage budgets cover both turns in a phase, so per-ability budgets are halved for Bosses (this matches the published Bosses).
-  - Race stat arrays are in the order STR, AGI, KNO, SPD, PER, SPE.
+- The owner's rulings (diagonals, Boss turns, recovery, rounding, defeat at 0 HP, damage order, cooldowns, Boss budgets, race stat order) are in `docs/rules.md` under "GM rulings".
 - Data note: some arc attacks are flagged `area` and others are not (the Boss "180 degree arc" attacks and Forge Lord's Flame Thrower are not).
 
 ## Data files
