@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Primordium Character Sheet has moved</title>
+<meta http-equiv="refresh" content="0; url=/primordium-tools/sheet/">
+<style>body { margin: 0; padding: 24px 16px; background: #1b2233; color: #ece4d4; font: 16px/1.5 system-ui, sans-serif; } a { color: #c99a4a; }</style>
+</head>
+<body>
+<p>The character sheet has moved to <a href="/primordium-tools/sheet/">its new home</a>. Your characters come with it.</p>
+<script>
+  // Retire this old copy's offline worker, then go to the new address.
+  if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations()
+    .then(rs => rs.forEach(r => { if (r.scope.toLowerCase().includes('/primordium-player-sheets/')) r.unregister(); })).catch(() => {});
+  location.replace('/primordium-tools/sheet/');
+</script>
+</body>
+</html>
