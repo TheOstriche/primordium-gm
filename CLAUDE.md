@@ -20,8 +20,20 @@ A laptop web app for running combat in **Primordium 2.0**, an original tabletop 
 7. **Data browser:** a quick lookup for skills (every tier's abilities and perks from `primordium-data.js`) and enemies (full stat blocks from `npc-data.js`, plus custom creatures), searchable and filterable.
 8. **Custom creature builder:** create, edit, and delete new NPC types (including Bosses) saved locally and included in the backup file. Same shape as `npc-data.js` entries. Use `data/scaling.json` to suggest HP, armor, and damage for the chosen role, level, and armor class, and flag stats far off budget. Custom creatures appear in the enemy picker and data browser.
 
+## Status (2026-10-08)
+All eight features are built. Tabs: Encounter, Combat (grid map and combat in one screen), Reference, Creatures, Save. Code layout: `js/rules.js` (scaling math) and `js/combat-engine.js` (combat rules) hold no screen code and are checked by `node tools/test-rules.js` and `node tools/test-combat.js`; each tab has its own file in `js/`.
+
 ## Open questions and working assumptions
-- **Quick and Defensive enemy abilities:** the NPC data does not mark ability type yet. Until it does, treat every enemy ability as a Standard ability (rolled on the tactics table). Support an optional `type` field on abilities so it can be added later.
+- **Quick and Defensive enemy abilities:** the NPC data does not mark ability type yet. Until it does, treat every enemy ability as a Standard ability (rolled on the tactics table). Abilities accept an optional `type` field (the creature builder sets it).
+- The owner's rulings on diagonals, Boss turns, recovery rolls, and rounding are in `docs/rules.md` ("GM rulings").
+- Assumptions not yet confirmed by the owner:
+  - Enemies are defeated at 0 HP (no death clock); only players are downed.
+  - Stack damage at the end of a phase does not count as a "hit" on a downed character.
+  - Damage order: armor per strike (less AP), then a failed dodge x1.5, then resistance, then block.
+  - Cooldown N means the ability is unavailable for the next N phases (used in phase P, ready in phase P + N + 1).
+  - Boss damage budgets cover both turns in a phase, so per-ability budgets are halved for Bosses (this matches the published Bosses).
+  - Race stat arrays are in the order STR, AGI, KNO, SPD, PER, SPE.
+- Data note: some arc attacks are flagged `area` and others are not (the Boss "180 degree arc" attacks and Forge Lord's Flame Thrower are not).
 
 ## Data files
 - `data/npc-data.js` sets `window.PRIMORDIUM_NPCS`: 97 creatures with role, level, tactics, HP, armor, size, stats, XP, attributes, description, and abilities. Each ability has a name, rarity, optional cooldown (phases, or "combat" for once per combat), its text, and where it is a damaging strike an `attack` object (`strikes`, `dice`, `sides`, `flat`, optional `ap`, `area`, `ignoreArmor`). Humanoids have `humanoid: true` and a `combatSkill` text instead of abilities. Bosses have `turnsPerPhase: 2`. Slimes and bonded mimics have no HP (`specialHp` explains their rule).

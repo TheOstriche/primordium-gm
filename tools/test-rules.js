@@ -43,5 +43,29 @@ else console.log('ok   xp matches all ' + NPCS.length + ' creatures');
 // Wolf: one Basic bite, 1 strike D10 = 5.5.
 check('wolf damage per turn', R.estimateDamagePerTurn(NPCS.find(n => n.name === 'Wolf')), 5.5);
 
+// Creature builder suggestions match the budget table (section 7).
+for (const [role, level, s] of [['Minion', 1, 1], ['Standard', 5, 3], ['Elite', 7, 4], ['Boss', 9, 5], ['Standard', 24, 12]]) {
+  const sug = R.suggestStats(role, level, 'None', 'Basic');
+  check(role + ' level ' + level + ' HP (unarmored)', sug.hp, Math.round(S.budgetTable[s][role].hp / (S.budgetTable[s][role].hp >= 50 ? 5 : 1)) * (S.budgetTable[s][role].hp >= 50 ? 5 : 1), 0);
+  check(role + ' level ' + level + ' damage per turn', sug.damagePerTurn, S.budgetTable[s][role].damagePerTurn, 0.06);
+}
+check('Medium armor at step 4', R.suggestStats('Standard', 7, 'Medium', 'Basic').armor, 5, 0);
+// Boss ability budgets are per turn (half the phase budget): Forge Lord's Basic Axe averages 19.5.
+check('Boss Basic budget per turn (Forge Lord)', R.suggestStats('Boss', 18, 'None', 'Great').basic, 19.5, 0.1);
+
+// Attack text parser agrees with the parsed attacks in npc-data.js.
+let agree = 0, total = 0;
+const disagree = [];
+for (const n of NPCS) for (const a of n.abilities || []) {
+  if (!a.attack) continue;
+  total++;
+  const p = R.parseAttackText(a.text) || {};
+  const norm = x => JSON.stringify({ s: x.strikes, d: x.dice, sd: x.sides, f: x.flat || 0, ap: x.ap || 0, ar: !!x.area, ig: !!x.ignoreArmor });
+  if (norm(p) === norm(a.attack)) agree++;
+  else disagree.push(n.name + ' / ' + a.name + ': ' + norm(p) + ' vs ' + norm(a.attack));
+}
+console.log((agree === total ? 'ok   ' : 'note ') + 'attack text parser matches ' + agree + ' of ' + total + ' attacks');
+disagree.slice(0, 12).forEach(d => console.log('       ' + d));
+
 console.log(failed ? '\n' + failed + ' check(s) failed' : '\nAll checks passed');
 process.exit(failed ? 1 : 0);

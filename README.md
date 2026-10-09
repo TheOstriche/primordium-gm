@@ -1,4 +1,4 @@
-# Primordium GM
+﻿# Primordium GM
 
 The GM's combat companion for Primordium 2.0.
 
@@ -10,6 +10,7 @@ Use the same browser each time: your players and encounters are saved inside tha
 
 ## For later edits
 
-- After changing `data/scaling.json`, run `node tools/build-scaling.js` so the app picks up the new numbers.
+- After changing `data/scaling.json`, `docs/rules.md`, or `docs/scaling.md`, run `node tools/build-data.js` so the app picks up the changes.
 - `node tools/test-rules.js` checks the game math against the worked examples in `docs/scaling.md`.
+- `node tools/test-combat.js` checks the combat rules (initiative, damage, stacks, death clocks, cooldowns) with fixed dice.
 - `node tools/serve.js` serves the app at http://localhost:8080 (optional; used for testing).

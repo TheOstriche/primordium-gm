@@ -147,7 +147,7 @@
         h('div.big-stat', h('span.label', 'Rounds to clear'),
           h('span.value', sm.diff ? sm.diff.roundsToClear.toFixed(1) : '—'))),
       sm.party.length
-        ? h('p.muted.small', sm.party.length + ' players, average level ' + fmt(sm.avgLevel, 1) +
+        ? h('p.muted.small', sm.party.length + (sm.party.length === 1 ? ' player' : ' players') + ', average level ' + fmt(sm.avgLevel, 1) +
             ' (step ' + sm.step + ', ' + stepInfo.stage + '). Estimate uses reference players at this step: ' +
             stepInfo.playerHP + ' HP, ' + stepInfo.playerArmor + ' armor.')
         : h('p.muted.small', 'Tick players in the party list to see the difficulty.'),
@@ -296,7 +296,7 @@
     const list = GameData.all().filter(matches)
       .sort((a, b) => a.family.localeCompare(b.family) || a.level - b.level || a.name.localeCompare(b.name));
     fill(els.pickerList,
-      h('div.picker-count.muted.small', list.length + ' creatures'),
+      h('div.picker-count.muted.small', list.length + (list.length === 1 ? ' creature' : ' creatures')),
       list.map(n => h('div.picker-item',
         h('div.picker-main', { onclick: () => { openDetail = openDetail === n.name ? null : n.name; drawPicker(); } },
           h('div',

@@ -89,7 +89,7 @@
       const enemies = enc.enemies.reduce((t, e) => t + e.count, 0);
       body = [
         h('p', 'Set up combat for ', h('strong', enc.name), '.'),
-        h('p.muted', players + ' players and ' + enemies + ' enemies. Change these on the Encounter tab.'),
+        h('p.muted', players + (players === 1 ? ' player and ' : ' players and ') + enemies + (enemies === 1 ? ' enemy' : ' enemies') + '. Change these on the Encounter tab.'),
         h('button.primary', { disabled: !players && !enemies, onclick: () => start(enc) }, 'Set up combat')
       ];
     }

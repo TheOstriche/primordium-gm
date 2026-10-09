@@ -123,10 +123,43 @@
       };
     }
 
+    // Suggested stats for a new creature (scaling.md section 4 budget formulas).
+    function suggestStats(role, level, armorClass, tactics) {
+      const s = levelToStep(level);
+      const st = step(s), r = S.roles[role], ac = S.armorClasses[armorClass || 'None'];
+      if (!st || !r || !ac) return null;
+      const hpRaw = r.playerTurnsToKill * st.playerDamagePerTurn * ac.hpMultiplier;
+      // For Bosses this covers both turns in a phase, so each turn's abilities get half
+      // (matches the published Bosses in npc-data.js).
+      const damagePerTurn = st.playerHP / r.turnsToDropPlayer + st.playerArmor;
+      const basic = damagePerTurn / (r.turnsPerPhase || 1) / (S.tacticsMultipliers[tactics] || 1);
+      const rarity = { Basic: basic };
+      for (const [k, m] of Object.entries(S.rarityMultipliers)) rarity[k] = basic * m;
+      return {
+        step: s, stage: st.stage,
+        hp: hpRaw >= 50 ? Math.round(hpRaw / 5) * 5 : Math.round(hpRaw),
+        armor: Math.round(st.referenceArmor * ac.armorMultiplier),
+        damagePerTurn, basic, rarity, areaPerTarget: S.areaPerTarget,
+        minTactics: r.minTactics || null, turnsPerPhase: r.turnsPerPhase || 1
+      };
+    }
+
+    // Reads "2 Strikes 2D12+9 to all entities within 3M. 2AP." into an attack object.
+    function parseAttackText(text) {
+      const m = String(text).match(/(\d+)\s+strikes?\s+(\d*)\s*d(\d+)(?:\s*\+\s*(\d+))?/i);
+      if (!m) return null;
+      const atk = { strikes: +m[1], dice: m[2] ? +m[2] : 1, sides: +m[3], flat: m[4] ? +m[4] : 0 };
+      const ap = String(text).match(/(\d+)\s*AP\b/);
+      if (ap) atk.ap = +ap[1];
+      if (/\bto (all|every|a \d+(\.\d+)?M|up to \d+ targets)|\bto an? \d+ degree|\barc\b|\bline\b/i.test(text)) atk.area = true;
+      if (/ignor\w*\s+(all\s+)?armou?r/i.test(text)) atk.ignoreArmor = true;
+      return atk;
+    }
+
     return {
       RARITIES, TACTICS_TABLE, levelToStep, xpFor, playerDptVsArmor, attackAverage,
       rarityForRoll, estimateDamagePerTurn, budgetFor, combatProfile,
-      difficultyBand, encounterDifficulty, stepInfo: step
+      difficultyBand, encounterDifficulty, stepInfo: step, suggestStats, parseAttackText
     };
   }
 
