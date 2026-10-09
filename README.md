@@ -6,13 +6,13 @@ Two apps for Primordium 2.0 that share one copy of the game data.
 |---|---|---|
 | `sheet/` | Player character sheet (phone app, works offline) | https://theostriche.github.io/primordium-tools/sheet/ |
 | `gm/` | GM combat tool (laptop) | https://theostriche.github.io/primordium-tools/gm/ |
-| `shared/` | `primordium-data.js`: every skill, race, and trait, used by both apps | |
+| `shared/` | `primordium-data.js` (every skill, race, and trait) and `character-rules.js` (how a sheet's stats, HP, and armor add up), used by both apps | |
 
 The site's front page (`index.html`) links to both apps.
 
 ## Changing the game data
 
-Edit `shared/primordium-data.js` once and both apps pick it up. Then raise `VERSION` in `sheet/sw.js` (for example `primordium-v6` to `primordium-v7`) so installed phones download the new data.
+Edit `shared/primordium-data.js` once and both apps pick it up. Then raise `VERSION` in `sheet/sw.js` (for example `primordium-v7` to `primordium-v8`) so installed phones download the new data.
 
 ## Opening the apps on this computer
 

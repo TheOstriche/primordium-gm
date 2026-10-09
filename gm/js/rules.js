@@ -31,9 +31,10 @@
     }
 
     // Average damage of one ability's attack, before the target's armor.
+    // Skill attacks add a damage stat modifier per die and the weapon tier once (js/skills.js).
     function attackAverage(atk) {
       if (!atk) return 0;
-      return atk.strikes * (atk.dice * (atk.sides + 1) / 2 + (atk.flat || 0));
+      return atk.strikes * (atk.dice * (atk.sides + 1) / 2 + (atk.flat || 0) + (atk.perDie || 0) * atk.dice) + (atk.bonus || 0);
     }
 
     function rarityForRoll(tactics, roll) {

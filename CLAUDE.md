@@ -5,6 +5,7 @@ One repository (`TheOstriche/primordium-tools`, published with GitHub Pages) hol
 - `gm/`: the GM combat tool (laptop). Its full brief is `gm/CLAUDE.md`.
 - `sheet/`: the player character sheet (phone, installable, offline through `sheet/sw.js`). Notes in `sheet/README.md`.
 - `shared/primordium-data.js`: sets `window.PRIMORDIUM_DATA` (skills with every tier's abilities and perks, races, traits). It is the **only** copy; both apps load it with `../shared/primordium-data.js`. Put new data that both apps need in `shared/`, not inside one app.
+- `shared/character-rules.js`: sets `window.PrimordiumCharacter` (what skills grant, and a character's stats, maximum HP, and armor). The sheet computes its totals with it, and the GM tool uses it to import sheet backups, so the two always agree.
 - `index.html`: landing page linking both apps.
 - `tools/serve.js`: local server for the whole repository (port 8080). `tools/old-sheet-redirect/`: files that replace the old `Primordium-Player-Sheets` repository's contents.
 

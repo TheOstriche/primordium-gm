@@ -37,19 +37,14 @@
           hp: p.hp, maxHp: p.hp, armor: p.armor, stats: Object.assign({}, p.stats), size: 'Average'
         }));
       }
-      for (const row of enc.enemies) {
-        const npc = findNpc(row.npcName);
-        if (!npc) continue;
-        for (let i = 0; i < row.count; i++) {
-          const hasHp = typeof npc.hp === 'number';
-          combatants.push(blankCombatant({
-            id: newId(), kind: 'enemy', refId: npc.name,
-            name: row.count > 1 ? npc.name + ' ' + (i + 1) : npc.name,
-            level: npc.level, role: npc.role, tactics: npc.tactics,
-            hp: hasHp ? npc.hp : null, maxHp: hasHp ? npc.hp : null,
-            armor: npc.armor || 0, stats: Object.assign({}, npc.stats), size: npc.size || 'Average',
-            turnsPerPhase: npc.turnsPerPhase || 1, xp: npc.xp != null ? npc.xp : Rules.xpFor(npc.role, npc.level)
-          }));
+      // Allies (friendly NPCs such as summons and local help) fight on the players' side.
+      for (const [kind, rows] of [['ally', enc.allies || []], ['enemy', enc.enemies]]) {
+        for (const row of rows) {
+          const npc = findNpc(row.npcName);
+          if (!npc) continue;
+          for (let i = 0; i < row.count; i++) {
+            combatants.push(npcCombatant(npc, kind, row.count > 1 ? npc.name + ' ' + (i + 1) : npc.name));
+          }
         }
       }
       return {
@@ -58,16 +53,23 @@
       };
     }
 
-    // Enemies that join mid-fight (reinforcements).
-    function addEnemy(combat, npc) {
-      const same = combat.combatants.filter(c => c.refId === npc.name).length;
-      const c = blankCombatant({
-        id: newId(), kind: 'enemy', refId: npc.name, name: npc.name + ' ' + (same + 1),
+    // kind: 'enemy' or 'ally'.
+    function npcCombatant(npc, kind, name) {
+      const hasHp = typeof npc.hp === 'number';
+      return blankCombatant({
+        id: newId(), kind, refId: npc.name, name,
         level: npc.level, role: npc.role, tactics: npc.tactics,
-        hp: typeof npc.hp === 'number' ? npc.hp : null, maxHp: typeof npc.hp === 'number' ? npc.hp : null,
+        hp: hasHp ? npc.hp : null, maxHp: hasHp ? npc.hp : null,
         armor: npc.armor || 0, stats: Object.assign({}, npc.stats), size: npc.size || 'Average',
         turnsPerPhase: npc.turnsPerPhase || 1, xp: npc.xp != null ? npc.xp : Rules.xpFor(npc.role, npc.level)
       });
+    }
+
+    // NPCs that join mid-fight (reinforcements, summons).
+    function addNpc(combat, npc, kind) {
+      kind = kind || 'enemy';
+      const same = combat.combatants.filter(c => c.refId === npc.name).length;
+      const c = npcCombatant(npc, kind, npc.name + ' ' + (same + 1));
       c.init = initiativeOf(c);
       combat.combatants.push(c);
       if (combat.phase > 0) {
@@ -85,21 +87,25 @@
 
     const get = (combat, id) => combat.combatants.find(c => c.id === id);
 
+    // Two sides: players and their allies, and enemies.
+    const side = c => (c.kind === 'enemy' ? 'enemy' : 'player');
+    const KIND_ORDER = { player: 0, ally: 1, enemy: 2 };
+
     // ---------- Initiative and turns ----------
 
-    // Enemies: 5 + Perception. Players: the D10 + Perception result the GM types in.
+    // NPCs (enemies and allies): 5 + Perception. Players: the D10 + Perception result the GM types in.
     function initiativeOf(c) {
-      if (c.kind === 'enemy') return 5 + ((c.stats && c.stats.PER) || 0);
+      if (c.kind !== 'player') return 5 + ((c.stats && c.stats.PER) || 0);
       return Number(c.init) || 0;
     }
 
-    // Ties: players before enemies; between players, higher Perception first.
+    // Ties: players before allies before enemies; between players, higher Perception first.
     // Any remaining tie keeps list order (the GM can move entries; players choose).
     function buildOrder(combat) {
       const list = combat.combatants.map((c, i) => ({ c, i }));
       list.sort((a, b) =>
         initiativeOf(b.c) - initiativeOf(a.c) ||
-        (a.c.kind === b.c.kind ? 0 : a.c.kind === 'player' ? -1 : 1) ||
+        (KIND_ORDER[a.c.kind] - KIND_ORDER[b.c.kind]) ||
         (a.c.kind === 'player' ? ((b.c.stats.PER || 0) - (a.c.stats.PER || 0)) : 0) ||
         a.i - b.i);
       combat.order = list.map(({ c }) => ({ cid: c.id }));
@@ -107,10 +113,10 @@
       for (const { c } of list) {
         if ((c.turnsPerPhase || 1) > 1) combat.order.push({ cid: c.id, second: true });
       }
-      for (const c of combat.combatants) if (c.kind === 'enemy') c.init = initiativeOf(c);
+      for (const c of combat.combatants) if (c.kind !== 'player') c.init = initiativeOf(c);
     }
 
-    // surprise: null, 'player' (players ambush) or 'enemy' (enemies ambush).
+    // surprise: null, 'player' (players and allies ambush) or 'enemy' (enemies ambush).
     function begin(combat, surprise) {
       buildOrder(combat);
       combat.surprise = surprise || null;
@@ -128,7 +134,7 @@
     function canAct(combat, entry) {
       const c = get(combat, entry.cid);
       if (!c || c.dead) return false;
-      if (inSurprise(combat) && c.kind !== combat.surprise) return false;
+      if (inSurprise(combat) && side(c) !== combat.surprise) return false;
       return true;
     }
 
@@ -230,7 +236,7 @@
           c.stabilized = false;
           log(combat, c.name + ' is back on their feet.');
         }
-        if (c.kind === 'enemy' && c.dead) c.dead = false;
+        if (c.kind !== 'player' && c.dead) c.dead = false;
       }
     }
 
@@ -336,7 +342,8 @@
     }
 
     // Roll the D20 on the tactics row and pick an ability (rules.md, enemy ability selection).
-    function chooseAbility(combat, c, npc, forcedRoll) {
+    // abilities: the list to choose from (a humanoid's skill abilities); defaults to the stat block's.
+    function chooseAbility(combat, c, npc, forcedRoll, abilities) {
       const R = Rules.RARITIES;
       const d20 = forcedRoll || die(20);
       const rolled = Rules.rarityForRoll(npc.tactics, d20);
@@ -348,7 +355,7 @@
         }
         if (idx > 0) { idx--; notes.push('Disoriented: drops to ' + R[idx] + '.'); }
       }
-      const standard = (npc.abilities || []).filter(a => !a.type || a.type === 'Standard');
+      const standard = (abilities || npc.abilities || []).filter(a => !a.type || a.type === 'Standard');
       for (let i = idx; i >= 0; i--) {
         const atRarity = standard.filter(a => a.rarity === R[i]);
         const ready = atRarity.filter(a => isReady(combat, c, a));
@@ -362,12 +369,15 @@
     }
 
     // Roll an attack object. A strike only fails if every die rolls a 1.
+    // Skill attacks (humanoids) also carry perDie (damage stat modifier per die, rounded down
+    // per strike) and bonus (weapon tier, added to the first strike).
     function rollAttack(atk) {
       const strikes = [];
       for (let i = 0; i < atk.strikes; i++) {
         const dice = roll(atk.dice, atk.sides);
         const failed = dice.every(v => v === 1);
-        strikes.push({ dice, flat: atk.flat || 0, failed, value: failed ? 0 : sum(dice) + (atk.flat || 0) });
+        const flat = Math.floor((atk.flat || 0) + (atk.perDie || 0) * dice.length) + (i === 0 ? (atk.bonus || 0) : 0);
+        strikes.push({ dice, flat, failed, value: failed ? 0 : sum(dice) + flat });
       }
       return { strikes, ap: atk.ap || 0, ignoreArmor: !!atk.ignoreArmor, area: !!atk.area };
     }
@@ -391,7 +401,7 @@
 
     return {
       STACK_TYPES, DAMAGING_STACKS, CONDITIONS, FOOTPRINT, DEATH_CLOCK,
-      die, roll, fromEncounter, addEnemy, get, initiativeOf, buildOrder, begin, inSurprise, canAct,
+      die, roll, fromEncounter, npcCombatant, addNpc, addEnemy: addNpc, get, side, initiativeOf, buildOrder, begin, inSurprise, canAct,
       nextTurn, activeEntry, moveEntry, endPhase, isDowned, hurt, heal, stabilize,
       computeDamage, applyAttack, addStacks, recover, stackEffects, movement, footprint, distance,
       cooldownOf, isReady, markUsed, chooseAbility, rollAttack, xpSummary, log

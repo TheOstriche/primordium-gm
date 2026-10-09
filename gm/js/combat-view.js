@@ -1,6 +1,6 @@
 // Combat tab: set up from the current encounter, initiative, turn order, the grid,
 // and a panel for the selected token. Players run their own characters, so the GM
-// only tracks their HP and position; enemies get attacks, stacks, and conditions.
+// only tracks their HP and position; NPCs (enemies and allies) get attacks, stacks, and conditions.
 (function () {
   const { h, fill, toast, fmt } = UI;
   const S = () => Store.state;
@@ -13,8 +13,9 @@
   let selectedId = null;
   let ruler = false;
   let openMenu = null;    // 'map' or 'add'
+  let addSide = 'enemy';  // side for NPCs added mid-fight
   let ambush = '';
-  let plan = null;        // the selected enemy's attack: { cid, ability, tactic, targets, roll, manual, ap }
+  let plan = null;        // the selected NPC's attack: { cid, ability, tactic, targets, roll, manual, ap }
   let report = null;      // lines from the last end of phase
   let ending = false;     // showing the end-combat screen
   let xpAll = false;      // award XP for enemies that were not defeated too
@@ -51,7 +52,7 @@
     fill(root, els.bar, h('div.combat-layout', els.left, els.center, els.right));
     grid = Grid.create(els.center, {
       onSelect: id => {
-        // While an enemy attack is being aimed, clicking a target's token aims at it.
+        // While an NPC's attack is being aimed, clicking a target's token aims at it.
         if (aiming() && isTarget(Combat.get(combat(), id))) return toggleTarget(id);
         selectedId = id;
         refresh();
@@ -97,10 +98,12 @@
     } else {
       const players = s.players.filter(p => enc.partyIds.includes(p.id)).length;
       const enemies = enc.enemies.reduce((t, e) => t + e.count, 0);
+      const allies = (enc.allies || []).reduce((t, e) => t + e.count, 0);
       body = [
         h('p', 'Set up combat for ', h('strong', enc.name), '.'),
-        h('p.muted', players + (players === 1 ? ' player and ' : ' players and ') + enemies + (enemies === 1 ? ' enemy' : ' enemies') + '. Change these on the Encounter tab.'),
-        h('button.primary', { disabled: !players && !enemies, onclick: () => start(enc) }, 'Set up combat')
+        h('p.muted', players + (players === 1 ? ' player, ' : ' players, ') + (allies ? allies + (allies === 1 ? ' ally, ' : ' allies, ') : '') +
+          enemies + (enemies === 1 ? ' enemy' : ' enemies') + '. Change these on the Encounter tab.'),
+        h('button.primary', { disabled: !players && !enemies && !allies, onclick: () => start(enc) }, 'Set up combat')
       ];
     }
     fill(root, h('div.page-narrow', h('h1', 'Combat'), body));
@@ -126,7 +129,7 @@
     act(() => { map.cell = Math.max(16, Math.min(90, fit)); });
   }
 
-  // Players along the left edge, enemies along the right, in columns.
+  // Players and allies along the left edge, enemies along the right, in columns.
   function autoPlace(cb, map) {
     const place = (list, fromRight) => {
       let col = fromRight ? map.cols - 2 : 1, row = 1, colWidth = 1;
@@ -144,7 +147,7 @@
         colWidth = Math.max(colWidth, fw);
       }
     };
-    place(cb.combatants.filter(c => c.kind === 'player'), false);
+    place(cb.combatants.filter(c => c.kind !== 'enemy'), false);
     place(cb.combatants.filter(c => c.kind === 'enemy'), true);
   }
 
@@ -174,7 +177,7 @@
       h('span.spacer'),
       h('button' + (ruler ? '.on' : ''), { onclick: () => { ruler = !ruler; refresh(); }, title: 'Press and drag on the grid to measure' }, 'Ruler'),
       mapSettings(cb),
-      addEnemyControl(cb),
+      addNpcControl(cb),
       h('button.ghost.danger', { onclick: () => { ending = true; plan = null; refresh(); } }, 'End combat'));
   }
 
@@ -266,19 +269,23 @@
     act(() => { map.imageKey = null; });
   }
 
-  function addEnemyControl(cb) {
-    const select = h('select', { 'aria-label': 'Creature' },
+  function addNpcControl(cb) {
+    const select = h('select', { 'aria-label': 'NPC type' },
       GameData.all().slice().sort((a, b) => a.name.localeCompare(b.name))
         .map(n => h('option', { value: n.name }, n.name + ' (' + n.role + ', Lv ' + n.level + ')')));
-    return menu('add', 'Add enemy', [
-      h('p.muted.small', 'Reinforcements join the turn order at their initiative.'),
+    return menu('add', 'Add NPC', [
+      h('p.muted.small', 'Reinforcements and summons join the turn order at their initiative.'),
       select,
+      h('div.seg',
+        [['enemy', 'Enemy'], ['ally', 'Ally']].map(([v, label]) => h('button.small' + (addSide === v ? '.on' : ''), {
+          onclick: e => { addSide = v; e.target.parentNode.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === e.target)); }
+        }, label))),
       h('button.primary', {
         onclick: () => act(() => {
-          const c = Combat.addEnemy(cb, GameData.find(select.value));
+          const c = Combat.addNpc(cb, GameData.find(select.value), addSide);
           autoPlace(cb, mapOf(cb));
           selectedId = c.id;
-          Combat.log(cb, c.name + ' joins the fight.');
+          Combat.log(cb, c.name + ' joins the fight' + (addSide === 'ally' ? ' as an ally.' : '.'));
         })
       }, 'Add')
     ]);
@@ -333,19 +340,19 @@
 
   function initiativeSetup(cb) {
     const players = cb.combatants.filter(c => c.kind === 'player');
-    const enemies = cb.combatants.filter(c => c.kind === 'enemy');
+    const npcs = cb.combatants.filter(c => c.kind !== 'player');
     return h('div.card',
       h('h3', 'Initiative'),
-      h('p.muted.small', 'Type each player\'s D10 + Perception roll. Enemies have 5 + Perception.'),
+      h('p.muted.small', 'Type each player\'s D10 + Perception roll. NPCs have 5 + Perception.'),
       players.map(c => h('div.init-row',
         h('span', c.name),
         h('input', { type: 'number', value: c.init ?? '', placeholder: '—', 'aria-label': c.name + ' initiative',
           onchange: e => { c.init = e.target.value === '' ? null : parseInt(e.target.value, 10); Store.changed(); } }))),
-      enemies.map(c => h('div.init-row', h('span', c.name), h('strong', String(Combat.initiativeOf(c))))),
+      npcs.map(c => h('div.init-row', h('span', c.name, c.kind === 'ally' ? h('span.muted.small', ' ally') : null), h('strong', String(Combat.initiativeOf(c))))),
       h('label.field', 'Ambush',
         h('select', { onchange: e => { ambush = e.target.value; refresh(); } },
           h('option', { value: '', selected: ambush === '' }, 'No ambush'),
-          h('option', { value: 'player', selected: ambush === 'player' }, 'Players ambush'),
+          h('option', { value: 'player', selected: ambush === 'player' }, 'Players and allies ambush'),
           h('option', { value: 'enemy', selected: ambush === 'enemy' }, 'Enemies ambush'))),
       ambush ? h('p.muted.small', 'The ambushers get a surprise phase first. Ambushed characters can not use Defensive or Quick abilities in it.') : null,
       h('p.muted.small', 'Drag tokens into position before you begin.'),
@@ -368,19 +375,19 @@
     if (ending) return fill(els.right, endScreen(cb));
     const c = Combat.get(cb, selectedId);
     if (!c) return fill(els.right, h('p.muted', 'Select a token.'));
-    const npc = c.kind === 'enemy' ? GameData.find(c.refId) : null;
+    const npc = c.kind !== 'player' ? GameData.find(c.refId) : null;
     const isActive = activeCombatant(cb) === c;
     fill(els.right,
       h('div.detail-head',
         h('div', h('h2', c.name),
           h('div.muted.small', c.kind === 'player'
             ? 'Player · Level ' + c.level + ' · Armor ' + (c.armor || 0) + ' · Move ' + Combat.movement(c) + 'M'
-            : c.role + ' · Level ' + c.level + ' · ' + c.tactics + ' tactics' + (c.turnsPerPhase > 1 ? ' · 2 turns per phase' : ''))),
+            : (c.kind === 'ally' ? 'Ally · ' : '') + c.role + ' · Level ' + c.level + ' · ' + c.tactics + ' tactics' + (c.turnsPerPhase > 1 ? ' · 2 turns per phase' : ''))),
         isActive ? h('span.tag.big', 'Their turn') : null),
       hpBlock(cb, c, npc),
       npc ? [
         attackSection(cb, c, npc, isActive),
-        enemyStats(c, npc),
+        npcStats(c, npc),
         stacksSection(cb, c, isActive),
         effectsSection(cb, c)
       ] : null,
@@ -405,7 +412,7 @@
     plan = null;
   }
 
-  // ---- HP: players take damage as told; enemies take strikes after armor ----
+  // ---- HP: players take damage as told; NPCs take strikes after armor ----
 
   function hpBlock(cb, c, npc) {
     if (c.hp == null) {
@@ -418,7 +425,7 @@
         }) }), 'Defeated'));
     }
     const pct = c.maxHp ? Math.max(0, Math.min(1, c.hp / c.maxHp)) : 1;
-    const enemy = c.kind === 'enemy';
+    const enemy = c.kind !== 'player';
     const amount = h('input.amount', { placeholder: enemy ? 'Strikes: 7, 5' : 'Amount', 'aria-label': 'Amount' });
     const ap = h('input.tiny-num', { type: 'number', min: 0, value: 0, title: 'AP' });
     const noArmor = h('input', { type: 'checkbox' });
@@ -481,14 +488,28 @@
       status);
   }
 
-  // ---- Enemy attacks: pick an ability, aim, roll, confirm ----
+  // ---- NPC attacks: pick an ability, aim, roll, confirm ----
+  // Enemies attack players and allies; allies attack enemies.
 
   const aiming = () => plan && (plan.manual != null || (plan.ability && plan.ability.attack));
-  const isTarget = t => t && plan && t.id !== plan.cid && t.kind === 'player' && !t.dead && t.hp != null;
+  function isTarget(t) {
+    const me = plan && Combat.get(combat(), plan.cid);
+    return !!(t && me && t.id !== me.id && Combat.side(t) !== Combat.side(me) && !t.dead && t.hp != null);
+  }
 
   function planFor(c) {
     if (!plan || plan.cid !== c.id) plan = { cid: c.id, ability: null, tactic: null, targets: {}, roll: null, manual: null, ap: 0 };
     return plan;
+  }
+
+  // A humanoid's skill setup is kept on its token, so two Soldiers can use different weapons.
+  function skillSetup(c, npc) {
+    if (!c.skill) c.skill = Skills.setupFor(npc);
+    return c.skill;
+  }
+
+  function abilitiesOf(c, npc) {
+    return npc.humanoid ? Skills.abilitiesFor(skillSetup(c, npc), npc.tactics) : (npc.abilities || []);
   }
 
   function toggleTarget(id) {
@@ -501,96 +522,134 @@
     refresh();
   }
 
+  // Humanoids: which skill (and path) they fight with, their damage stat and weapon tier.
+  function skillPicker(c, npc) {
+    const s = skillSetup(c, npc);
+    const change = fn => act(() => { fn(); Skills.choosePath(s); plan = null; });
+    const choices = s.options.includes(s.skill) || !s.skill ? s.options : s.options.concat(s.skill);
+    const paths = s.pathTier ? Skills.pathsOf(s.skill) : [];
+    const all = choices.length < Skills.combatSkills.length;
+    return h('div.skill-setup',
+      h('select.small', {
+        'aria-label': 'Combat skill',
+        onchange: e => change(() => {
+          if (e.target.value === '*') s.options = Skills.combatSkills.slice();
+          else s.skill = e.target.value;
+        })
+      },
+        h('option', { value: '', selected: !s.skill, disabled: true }, 'Choose its skill…'),
+        choices.map(n => h('option', { value: n, selected: s.skill === n }, n)),
+        all ? h('option', { value: '*' }, 'Other skill…') : null),
+      paths.length ? h('select.small', { 'aria-label': 'Path', onchange: e => change(() => { s.path = e.target.value; }) },
+        paths.map(n => h('option', { value: n, selected: s.path === n }, n))) : null,
+      h('span.muted.small', s.pathTier ? 'Path Tier ' + s.pathTier : 'Base Tier ' + s.baseTier),
+      h('label.inline.small', { title: 'Damage stat: adds ½ per D4 or D6, 1 per D8 to D12, 2 per D20 for each point' }, 'Stat',
+        h('input.tiny-num', { type: 'number', min: 0, value: s.stat, onchange: e => change(() => { s.stat = Math.max(0, parseInt(e.target.value, 10) || 0); }) })),
+      h('label.inline.small', { title: 'Weapon tier: added to one strike per attack' }, 'Weapon',
+        h('input.tiny-num', { type: 'number', min: 0, value: s.weaponTier, onchange: e => change(() => { s.weaponTier = Math.max(0, parseInt(e.target.value, 10) || 0); }) })));
+  }
+
   function attackSection(cb, c, npc, isActive) {
     if (cb.phase === 0 || c.dead) return null;
     const p = planFor(c);
     const disabled = Combat.isDowned(c);
+    const abilities = abilitiesOf(c, npc);
+    const live = isActive || p.ability || p.manual != null;
     const parts = [h('div.card-head', h('h3', 'Attack'),
-      !npc.humanoid ? h('button' + (isActive && !p.ability ? '.primary' : '') + '.small', {
+      abilities.length ? h('button' + (isActive && !p.ability && p.manual == null ? '.primary' : '') + '.small', {
         title: 'Roll a D20 on the tactics table to pick an ability',
         onclick: () => {
-          const ch = Combat.chooseAbility(cb, c, npc);
-          Object.assign(p, { ability: ch.ability, tactic: ch, roll: null });
+          const ch = Combat.chooseAbility(cb, c, npc, null, abilities);
+          Object.assign(p, { ability: ch.ability, tactic: ch, roll: null, manual: null, targets: {} });
           refresh();
         }
       }, 'Roll tactics') : null)];
 
-    if (npc.humanoid) {
-      // Humanoids use player skills: the GM types the strike damage.
-      if (p.manual == null) p.manual = '';
-      parts.push(h('p.small.muted', npc.combatSkill));
-    } else {
-      if (p.tactic) {
-        parts.push(h('p.small', 'D20 ', h('strong', String(p.tactic.d20)), ' → ', p.tactic.rolled,
-          p.tactic.notes.length ? h('span.muted', '. ' + p.tactic.notes.join(' ')) : null));
-      }
-      parts.push(h('div.ability-list', (npc.abilities || []).map(a => {
+    if (npc.humanoid) parts.push(skillPicker(c, npc));
+    if (p.tactic) {
+      parts.push(h('p.small', 'D20 ', h('strong', String(p.tactic.d20)), ' → ', p.tactic.rolled,
+        p.tactic.notes.length ? h('span.muted', '. ' + p.tactic.notes.join(' ')) : null));
+    }
+    if (abilities.length) {
+      parts.push(h('div.ability-list', abilities.map(a => {
         const ready = Combat.isReady(cb, c, a);
         const r = c.cooldowns[a.name];
         const on = p.ability && p.ability.name === a.name;
         return h('button.ability-btn' + (on ? '.on' : ''), {
           disabled: !ready,
-          title: a.text,
-          onclick: () => { p.ability = on ? null : a; p.roll = null; p.tactic = on ? p.tactic : null; refresh(); }
+          title: (a.tier ? a.tier + '. ' : '') + a.text,
+          onclick: () => { Object.assign(p, { ability: on ? null : a, roll: null, manual: null, targets: {} }); if (!on) p.tactic = null; refresh(); }
         },
           h('span.rarity.rarity-' + a.rarity.toLowerCase(), a.rarity),
-          h('span.ability-name', a.name),
+          h('span.ability-name', a.name, a.type && a.type !== 'Standard' ? h('span.type-tag', a.type) : null),
           h('span.muted.small', !ready ? (r === 'combat' ? 'used' : 'phase ' + r) : a.attack ? 'avg ' + fmt(Rules.attackAverage(a.attack), 1) : 'effect'));
       })));
-      const cooling = (npc.abilities || []).filter(a => !Combat.isReady(cb, c, a));
-      if (cooling.length) {
-        parts.push(h('button.ghost.small', { onclick: () => act(() => { c.cooldowns = {}; }) }, 'Reset cooldowns'));
-      }
-      if (!p.ability) return h('div.section.attack' + (isActive ? '.live' : ''), parts);
-      parts.push(h('p.small.ability-text', p.ability.text));
-      if (!p.ability.attack) {
-        parts.push(h('button.primary', {
-          disabled,
-          onclick: () => act(() => {
-            Combat.markUsed(cb, c, p.ability);
-            Combat.log(cb, c.name + ' uses ' + p.ability.name + '.');
-            plan = null;
-          })
-        }, 'Use ' + p.ability.name));
-        return h('div.section.attack.live', parts);
-      }
+    } else if (npc.humanoid) {
+      parts.push(h('p.small.muted', skillSetup(c, npc).skill ? 'No abilities at this tier and its tactics\' rarities.' : 'Choose its skill to list its abilities.'));
+    }
+    if (abilities.some(a => !Combat.isReady(cb, c, a))) {
+      parts.push(h('button.ghost.small', { onclick: () => act(() => { c.cooldowns = {}; }) }, 'Reset cooldowns'));
+    }
+    if (p.manual == null) {
+      parts.push(h('button.ghost.small', {
+        title: 'Type each strike\'s damage yourself',
+        onclick: () => { Object.assign(p, { manual: '', roll: null, targets: {} }); refresh(); }
+      }, 'Type damage instead'));
+    }
+    if (!p.ability && p.manual == null) return h('div.section.attack' + (live ? '.live' : ''), parts);
+
+    if (p.ability) {
+      parts.push(h('p.small.ability-text', p.ability.tier ? h('span.muted', p.ability.tier + ' · ' + (p.ability.type || 'Standard') + '. ') : null, p.ability.text));
+    }
+    if (p.ability && !p.ability.attack && p.manual == null) {
+      parts.push(h('button.primary', {
+        disabled,
+        onclick: () => act(() => {
+          Combat.markUsed(cb, c, p.ability);
+          Combat.log(cb, c.name + ' uses ' + p.ability.name + '.');
+          plan = null;
+        })
+      }, 'Use ' + p.ability.name));
+      return h('div.section.attack.live', parts);
     }
 
-    // Targets: players, nearest first. Clicking a token on the grid also aims.
+    // Targets on the other side, nearest first. Clicking a token on the grid also aims.
     const foes = cb.combatants.filter(isTarget);
     const dist = t => (c.x != null && t.x != null) ? Combat.distance(c.x, c.y, t.x, t.y) : null;
     foes.sort((x, y) => (dist(x) ?? 999) - (dist(y) ?? 999));
-    const area = !npc.humanoid && p.ability.attack.area;
-    parts.push(h('p.small.muted', area ? 'Area attack: choose everyone it hits.' : 'Choose the target (or click its token).'));
+    const manual = p.manual != null;
+    const area = manual || p.ability.attack.area;
+    parts.push(h('p.small.muted', area ? 'Choose everyone it hits (or click their tokens).' : 'Choose the target (or click its token).'));
     parts.push(h('div.chips', foes.map(t => h('button.toggle' + (p.targets[t.id] ? '.on' : ''), { onclick: () => toggleTarget(t.id) },
       t.name, dist(t) != null ? h('span.dist', ' ' + dist(t) + 'M') : null))));
+    if (!foes.length) parts.push(h('p.small.muted', 'No one on the other side can be hit.'));
 
     const chosen = foes.filter(t => p.targets[t.id]);
     const previews = [];
-    const strikesNow = () => npc.humanoid
+    const strikesNow = () => manual
       ? String(p.manual).split(/[^0-9]+/).filter(Boolean).map(Number)
       : p.roll ? p.roll.strikes.map(s => s.value) : [];
     // Updates the damage shown per target without redrawing (keeps typing focus).
     const updatePreviews = () => previews.forEach(({ t, el }) => {
       el.textContent = strikesNow().length ? '−' + result(t) : '';
     });
-    if (npc.humanoid) {
+    if (manual) {
       parts.push(h('div.row.small',
         h('input.amount', { placeholder: 'Strikes: 7, 5', value: p.manual, 'aria-label': 'Strike damage',
           oninput: e => { p.manual = e.target.value; updatePreviews(); } }),
         h('label.inline', 'AP', h('input.tiny-num', { type: 'number', min: 0, value: p.ap, oninput: e => { p.ap = +e.target.value || 0; updatePreviews(); } }))));
-    }
-
-    if (!npc.humanoid) {
+    } else {
       if (!p.roll) {
-        parts.push(h('button.primary', {
-          disabled: disabled || !chosen.length,
-          onclick: () => { p.roll = Combat.rollAttack(p.ability.attack); refresh(); }
-        }, chosen.length ? 'Roll ' + p.ability.name : 'Choose a target to roll'));
+        parts.push(h('div.row',
+          h('button.primary', {
+            disabled: disabled || !chosen.length,
+            onclick: () => { p.roll = Combat.rollAttack(p.ability.attack); refresh(); }
+          }, chosen.length ? 'Roll ' + p.ability.name : 'Choose a target to roll'),
+          h('button.ghost', { onclick: () => { plan = null; refresh(); } }, 'Cancel')));
         return h('div.section.attack.live', parts);
       }
       parts.push(h('div.roll-line',
-        p.roll.strikes.map((s, i) => h('span.strike' + (s.failed ? '.miss' : ''), { title: 'Dice: ' + s.dice.join(' + ') + (s.flat ? ' + ' + s.flat : '') },
+        p.roll.strikes.map(s => h('span.strike' + (s.failed ? '.miss' : ''), { title: 'Dice: ' + s.dice.join(' + ') + (s.flat ? ' + ' + s.flat : '') },
           String(s.value))),
         h('span.muted.small', p.roll.ignoreArmor ? 'ignores armor' : p.roll.ap ? p.roll.ap + ' AP' : ''),
         h('button.ghost.small', { onclick: () => { p.roll = Combat.rollAttack(p.ability.attack); refresh(); } }, 'Reroll')));
@@ -598,7 +657,7 @@
 
     // Each target's defense and the damage it takes.
     const opts = t => ({
-      strikes: strikesNow(), ap: npc.humanoid ? p.ap : p.roll.ap, ignoreArmor: !npc.humanoid && p.roll.ignoreArmor,
+      strikes: strikesNow(), ap: manual ? p.ap : p.roll.ap, ignoreArmor: !manual && p.roll.ignoreArmor,
       failedDodge: p.targets[t.id].def === 'failed', block: p.targets[t.id].def === 'block' ? p.targets[t.id].block : 0
     });
     const result = t => p.targets[t.id].def === 'dodged' ? 0 : Combat.computeDamage(t, opts(t)).total;
@@ -617,14 +676,14 @@
         disabled: disabled || !chosen.length,
         onclick: () => {
           if (!strikesNow().length) return toast('Type the damage of each strike first.', 'bad');
-          const name = npc.humanoid ? c.name : c.name + "'s " + p.ability.name;
+          const name = p.ability ? c.name + "'s " + p.ability.name : c.name;
           const summary = chosen.map(t => t.name + ' −' + result(t)).join(', ');
           act(() => {
             for (const t of chosen) {
               if (p.targets[t.id].def === 'dodged') Combat.log(cb, t.name + ' dodges ' + name + '.');
               else Combat.applyAttack(cb, t, opts(t), name);
             }
-            if (!npc.humanoid) Combat.markUsed(cb, c, p.ability);
+            if (p.ability) Combat.markUsed(cb, c, p.ability);
             plan = null;
           });
           toast(summary);
@@ -634,9 +693,9 @@
     return h('div.section.attack.live', parts);
   }
 
-  // ---- Enemy details ----
+  // ---- NPC details ----
 
-  function enemyStats(c, npc) {
+  function npcStats(c, npc) {
     const para = c.stacks.Paralysis ? c.stacks.Paralysis.n : 0;
     return h('div.section',
       h('div.stat-chips',
@@ -646,7 +705,8 @@
           const v = (c.stats[k] || 0) - ((k === 'STR' || k === 'AGI') ? para : 0);
           return h('span.chip', { title: GameData.STAT_NAMES[k] }, k + ' ', h('strong' + (para && (k === 'STR' || k === 'AGI') ? '.bad' : ''), String(v)));
         })),
-      npc.attributes && npc.attributes !== 'None' ? h('p.small.muted', npc.attributes) : null);
+      npc.attributes && npc.attributes !== 'None' ? h('p.small.muted', npc.attributes) : null,
+      npc.humanoid ? h('p.small.muted', npc.combatSkill) : null);
   }
 
   function stacksSection(cb, c, isActive) {

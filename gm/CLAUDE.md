@@ -21,7 +21,14 @@ A laptop web app for running combat in **Primordium 2.0**, an original tabletop 
 8. **Custom creature builder:** create, edit, and delete new NPC types (including Bosses) saved locally and included in the backup file. Same shape as `npc-data.js` entries. Use `data/scaling.json` to suggest HP, armor, and damage for the chosen role, level, and armor class, and flag stats far off budget. Custom creatures appear in the enemy picker and data browser.
 
 ## Status (2026-10-08)
-All eight features are built. Tabs: Encounter, Combat (grid map and combat in one screen), Reference, Creatures, Save. Code layout: `js/rules.js` (scaling math) and `js/combat-engine.js` (combat rules) hold no screen code and are checked by `node tools/test-rules.js` and `node tools/test-combat.js`; each tab has its own file in `js/`.
+All eight features are built. Tabs: Encounter, Combat (grid map and combat in one screen), Reference, NPC types, Save. Code layout: `js/rules.js` (scaling math), `js/combat-engine.js` (combat rules), and `js/skills.js` (humanoid skill abilities) hold no screen code and are checked by `node tools/test-rules.js` and `node tools/test-combat.js`; each tab has its own file in `js/`.
+
+### Added 2026-10-09 (owner request)
+- **Allies:** friendly NPCs (summons, guides, local help) are added to an encounter's party (`enc.allies`, same shape as `enemies`) and fight as combatants of kind `ally` on the players' side. The NPC picker switches between adding to Enemies or Allies; the combat bar's "Add NPC" adds either mid-fight.
+- **NPC types tab** (was Creatures): the campaign's own NPC types. The built-in list (`data/npc-data.js`) holds game-wide changes.
+- **Party bulk changes:** ticked players can have their level set, raised by one, or be removed together.
+- **Import from the character sheet:** the sheet's backup file (`{ id: character }`) is read with `../shared/character-rules.js`, the same code the sheet uses, so HP (maximum), armor (total), and stats match the sheet. Imported players keep a `sheetId`; importing again updates them.
+- **Humanoid skill attacks:** each humanoid token picks its skill (and path) from the options its stat block allows. Its abilities come from that skill in the Skill Guide up to its tier and the best rarity its tactics can roll; Roll tactics picks among the Standard ones. Strike dice are read from the ability text when possible; otherwise the GM types damage ("Type damage instead" works for any NPC). Custom humanoid NPC types can store a default `skillSetup`.
 
 ## Combat screen principles (owner feedback, 2026-10-08)
 - Players run their own characters. The GM tool only tracks their HP (and downed/death clock), position, and what it needs for movement and initiative (Speed, Perception, armor, level). Do not add player stacks, conditions, or attack tools.
@@ -29,6 +36,9 @@ All eight features are built. Tabs: Encounter, Combat (grid map and combat in on
 - Prefer fewer, smaller controls over more options.
 
 ## Open questions and working assumptions
+- **Humanoid damage modifier (please confirm):** read as damage stat × (½ per D4 or D6, 1 per D8 to D12, 2 per D20) for each die, plus the weapon tier on the first strike of an attack. A failed strike (every die a 1) deals 0. This reading reproduces the scaling workbook's Tier 0 benchmark (8.33 vs 8.32); a flat +½ per die does not. Fractions round down per strike.
+- **Humanoid basic attacks:** on a path, the path's Tier 1 basic attack replaces the Tier 0 one. The "Base Tier 3 upgraded basic attack" in stat blocks has no separate entry in the Skill Guide data, so the Tier 0 attack is used.
+- **Allies:** initiative 5 + Perception like other NPCs; ties go players, then allies, then enemies. They are not counted in the difficulty estimate and take no XP share. They are defeated at 0 HP (no death clock), and act in the players' surprise phase.
 - **Quick and Defensive enemy abilities:** the NPC data does not mark ability type yet. Until it does, treat every enemy ability as a Standard ability (rolled on the tactics table). Abilities accept an optional `type` field (the creature builder sets it).
 - The owner's rulings (diagonals, Boss turns, recovery, rounding, defeat at 0 HP, damage order, cooldowns, Boss budgets, race stat order) are in `docs/rules.md` under "GM rulings".
 - Data note: some arc attacks are flagged `area` and others are not (the Boss "180 degree arc" attacks and Forge Lord's Flame Thrower are not).

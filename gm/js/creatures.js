@@ -1,4 +1,5 @@
-// Creatures tab: build, edit, and delete custom creatures (including Bosses).
+// NPC types tab: build, edit, and delete the campaign's own NPC types (enemies, Bosses,
+// summons, guides, townsfolk). The game's built-in list is data/npc-data.js.
 // Suggestions and warnings come from the scaling workbook (data/scaling.json).
 (function () {
   const { h, fill, fmt, toast } = UI;
@@ -7,9 +8,9 @@
   const TYPES = ['Standard', 'Quick', 'Defensive'];
   const ARMOR_CLASSES = ['None', 'Light', 'Medium', 'Heavy'];
 
-  let draft = null;        // the creature being edited (a copy)
-  let originalName = null; // its saved name, when editing an existing custom creature
-  let copiedFrom = null;   // the creature a new one was copied from
+  let draft = null;        // the NPC type being edited (a copy)
+  let originalName = null; // its saved name, when editing an existing custom NPC type
+  let copiedFrom = null;   // the NPC type a new one was copied from
   let armorClass = 'None';
   let els = {};
 
@@ -21,7 +22,7 @@
     };
   }
 
-  // Open the editor on a copy of a creature (built-in: as a new custom one).
+  // Open the editor on a copy of an NPC type (built-in: as a new custom one).
   function editCopyOf(n) {
     draft = JSON.parse(JSON.stringify(n));
     if (n.custom) {
@@ -55,14 +56,14 @@
   function drawList() {
     const customs = S().customNpcs.slice().sort((a, b) => a.name.localeCompare(b.name));
     const copyFrom = h('select', { 'aria-label': 'Start from' },
-      h('option', { value: '' }, 'Start from an existing creature…'),
+      h('option', { value: '' }, 'Start from an existing NPC type…'),
       GameData.all().slice().sort((a, b) => a.name.localeCompare(b.name)).map(n => h('option', { value: n.name }, n.name)));
     fill(els.list,
-      h('button.primary', { onclick: () => { draft = blank(); originalName = null; copiedFrom = null; armorClass = 'None'; drawList(); drawEditor(); } }, 'New creature'),
+      h('button.primary', { onclick: () => { draft = blank(); originalName = null; copiedFrom = null; armorClass = 'None'; drawList(); drawEditor(); } }, 'New NPC type'),
       h('div.row', copyFrom, h('button', {
         onclick: () => { if (copyFrom.value) { editCopyOf(GameData.find(copyFrom.value)); drawList(); drawEditor(); } }
       }, 'Copy')),
-      h('div.list-group', 'Your creatures'),
+      h('div.list-group', 'Your NPC types'),
       customs.length ? customs.map(n => h('div.list-item' + (draft && originalName === n.name ? '.on' : ''), {
         onclick: () => { editCopyOf(n); drawList(); drawEditor(); }
       }, n.name, h('span.muted.small', ' ' + n.role + ' · Lv ' + n.level))) : h('p.muted.small', 'None yet.'));
@@ -73,9 +74,10 @@
   function drawEditor() {
     if (!draft) {
       return fill(els.editor,
-        h('h1', 'Custom creatures'),
-        h('p', 'Build new creatures, including Bosses. They are saved with your other data, appear in the enemy picker and the Reference tab, and are included in backups.'),
-        h('p.muted', 'Start with "New creature", or copy an existing creature and change it.'));
+        h('h1', 'NPC types'),
+        h('p', 'Build the NPCs of your campaign: enemies and Bosses, but also summons, guides, guards, and townsfolk who fight alongside the party. ' +
+          'They are saved with your other data, appear in the NPC picker (add them as enemies or allies) and the Reference tab, and are included in backups.'),
+        h('p.muted', 'Start with "New NPC type", or copy an existing one and change it. Changes for the whole game (the built-in list) belong in data/npc-data.js.'));
     }
     const d = draft;
     const sug = Rules.suggestStats(d.role, d.level, armorClass, d.tactics);
@@ -93,7 +95,7 @@
     els.budget = h('div.card.budget');
     fill(els.editor,
       h('div.editor-head',
-        h('h1', originalName ? 'Edit ' + originalName : copiedFrom ? 'New creature from ' + copiedFrom : 'New creature'),
+        h('h1', originalName ? 'Edit ' + originalName : copiedFrom ? 'New NPC type from ' + copiedFrom : 'New NPC type'),
         h('div.row',
           h('button.primary', { onclick: save }, 'Save'),
           h('button.ghost', { onclick: () => { draft = null; drawList(); drawEditor(); } }, 'Close'),
@@ -134,13 +136,45 @@
           d.role === 'Boss' || d.turnsPerPhase ? h('div.row', h('label.inline.small', 'Turns per phase ',
             h('input', { type: 'number', min: 1, max: 3, value: d.turnsPerPhase || 1, onchange: e => { d.turnsPerPhase = Math.max(1, parseInt(e.target.value, 10) || 1); drawBudget(); } }))) : null,
           d.humanoid
-            ? field('Combat skill', h('textarea', { rows: 4, placeholder: 'Combat skill, skill tier, damage stat, weapon tier…', oninput: e => { d.combatSkill = e.target.value; } }, d.combatSkill || ''), 'wide')
+            ? [field('Combat skill', h('textarea', { rows: 4, placeholder: 'Combat skill, skill tier, damage stat, weapon tier…', oninput: e => { d.combatSkill = e.target.value; } }, d.combatSkill || ''), 'wide'),
+               skillDefaults(d)]
             : abilitiesEditor(d, sug)),
         h('div.editor-side', els.budget)));
     drawBudget();
   }
 
   function redraw() { drawEditor(); }
+
+  // A humanoid's starting skill in combat (the GM can still change it on the token).
+  function skillDefaults(d) {
+    const base = Skills.setupFor(Object.assign({}, d, { skillSetup: null }));
+    const s = d.skillSetup = Object.assign({ skill: '', path: '', baseTier: base.baseTier, pathTier: base.pathTier, stat: base.stat, weaponTier: base.weaponTier }, d.skillSetup || {});
+    const tierValue = s.pathTier ? 'p' + s.pathTier : 'b' + s.baseTier;
+    const paths = s.pathTier && s.skill ? Skills.pathsOf(s.skill) : [];
+    const num = (label, key, title) => h('label.field', { title }, label, h('input', {
+      type: 'number', min: 0, value: s[key], onchange: e => { s[key] = Math.max(0, parseInt(e.target.value, 10) || 0); }
+    }));
+    return h('div.skill-defaults',
+      h('h3', 'Skill in combat'),
+      h('p.muted.small', 'Its abilities come from this skill in the Skill Guide, up to its tier and the rarities its tactics can roll. Leave the skill blank to choose it at the table.'),
+      h('div.form-grid',
+        h('label.field.span2', 'Skill', h('select', { onchange: e => { s.skill = e.target.value; s.path = ''; redraw(); } },
+          h('option', { value: '', selected: !s.skill }, 'Choose at the table'),
+          Skills.combatSkills.map(n => h('option', { value: n, selected: s.skill === n }, n)))),
+        h('label.field', 'Tier', h('select', {
+          onchange: e => {
+            const v = e.target.value;
+            if (v[0] === 'p') { s.baseTier = 4; s.pathTier = +v.slice(1); } else { s.baseTier = +v.slice(1); s.pathTier = 0; s.path = ''; }
+            redraw();
+          }
+        }, [1, 2, 3, 4].map(t => h('option', { value: 'b' + t, selected: tierValue === 'b' + t }, 'Base Tier ' + t)),
+           [1, 2, 3, 4].map(t => h('option', { value: 'p' + t, selected: tierValue === 'p' + t }, 'Path Tier ' + t)))),
+        paths.length ? h('label.field', 'Path', h('select', { onchange: e => { s.path = e.target.value; } },
+          h('option', { value: '', selected: !s.path }, 'First path'),
+          paths.map(n => h('option', { value: n, selected: s.path === n }, n)))) : null,
+        num('Damage stat', 'stat', 'Adds ½ per D4 or D6, 1 per D8 to D12, 2 per D20 for each point'),
+        num('Weapon tier', 'weaponTier', 'Added to one strike per attack')));
+  }
 
   function abilitiesEditor(d, sug) {
     d.abilities = d.abilities || [];
@@ -275,10 +309,13 @@
     const d = draft;
     d.name = (d.name || '').trim();
     d.family = (d.family || '').trim() || 'Custom';
-    if (!d.name) return toast('Give the creature a name.', 'bad');
+    if (!d.name) return toast('Give the NPC type a name.', 'bad');
     const clash = GameData.all().find(n => n.name.toLowerCase() === d.name.toLowerCase() && n.name !== originalName);
-    if (clash) return toast('"' + d.name + '" is already taken' + (clash.custom ? '' : ' by a built-in creature') + '.', 'bad');
-    if (!d.humanoid) {
+    if (clash) return toast('"' + d.name + '" is already taken' + (clash.custom ? '' : ' by a built-in NPC type') + '.', 'bad');
+    if (d.humanoid) {
+      if (d.skillSetup && !d.skillSetup.skill) delete d.skillSetup.path;
+    } else {
+      delete d.skillSetup;
       d.abilities = (d.abilities || []).filter(a => a.name.trim() || a.text.trim());
       if (d.abilities.some(a => !a.name.trim())) return toast('Every ability needs a name.', 'bad');
     }
@@ -291,9 +328,9 @@
     const at = list.findIndex(n => n.name === originalName);
     const record = JSON.parse(JSON.stringify(d));
     if (at >= 0) list[at] = record; else list.push(record);
-    // A rename carries through to encounters that use the creature.
+    // A rename carries through to encounters that use the NPC type.
     if (originalName && originalName !== d.name) {
-      S().encounters.forEach(e => e.enemies.forEach(r => { if (r.npcName === originalName) r.npcName = d.name; }));
+      S().encounters.forEach(e => [...e.enemies, ...(e.allies || [])].forEach(r => { if (r.npcName === originalName) r.npcName = d.name; }));
     }
     originalName = d.name;
     Store.changed();
@@ -303,11 +340,14 @@
   }
 
   function remove() {
-    const used = S().encounters.filter(e => e.enemies.some(r => r.npcName === originalName));
+    const used = S().encounters.filter(e => [...e.enemies, ...(e.allies || [])].some(r => r.npcName === originalName));
     const msg = 'Delete ' + originalName + '?' + (used.length ? ' It will also be removed from: ' + used.map(e => e.name).join(', ') + '.' : '');
     if (!confirm(msg)) return;
     S().customNpcs = S().customNpcs.filter(n => n.name !== originalName);
-    S().encounters.forEach(e => { e.enemies = e.enemies.filter(r => r.npcName !== originalName); });
+    S().encounters.forEach(e => {
+      e.enemies = e.enemies.filter(r => r.npcName !== originalName);
+      e.allies = (e.allies || []).filter(r => r.npcName !== originalName);
+    });
     toast(originalName + ' deleted.');
     draft = null;
     originalName = null;

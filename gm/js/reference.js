@@ -1,4 +1,4 @@
-// Reference tab: quick lookup for skills, enemies (stat blocks), races and traits, and the rules docs.
+// Reference tab: quick lookup for skills, NPCs (stat blocks), races and traits, and the rules docs.
 (function () {
   const { h, fill, fmt, toast } = UI;
   const DATA = window.PRIMORDIUM_DATA || { skills: [], races: {}, traits: {} };
@@ -22,7 +22,7 @@
   }
 
   function draw() {
-    const sections = [['skills', 'Skills'], ['enemies', 'Enemies'], ['races', 'Races and traits'], ['rules', 'Rules']];
+    const sections = [['skills', 'Skills'], ['enemies', 'NPCs'], ['races', 'Races and traits'], ['rules', 'Rules']];
     fill(els.nav, sections.map(([id, label]) => h('button.toggle' + (state.section === id ? '.on' : ''), {
       onclick: () => { state.section = id; draw(); }
     }, label)));
@@ -114,7 +114,7 @@
     const listBody = h('div');
     const set = key => e => { f[key] = e.target.value; drawEnemyList(); };
     fill(els.list,
-      h('input.search', { type: 'search', placeholder: 'Search enemies…', value: f.text, oninput: set('text') }),
+      h('input.search', { type: 'search', placeholder: 'Search NPCs…', value: f.text, oninput: set('text') }),
       h('div.row',
         h('select', { onchange: set('family') }, h('option', { value: '' }, 'All families'),
           GameData.families().map(x => h('option', { value: x, selected: f.family === x }, x))),
@@ -141,23 +141,24 @@
 
   function drawEnemyDetail() {
     const n = state.enemy && GameData.find(state.enemy);
-    if (!n) return fill(els.detail, h('p.muted', 'Choose an enemy.'));
+    if (!n) return fill(els.detail, h('p.muted', 'Choose an NPC.'));
     fill(els.detail,
       statBlock(n),
       h('div.row',
-        h('button', {
+        [['enemies', 'Add as enemy'], ['allies', 'Add as ally']].map(([list, label]) => h('button', {
           onclick: () => {
             const s = Store.state;
             let enc = s.encounters.find(e => e.id === s.settings.currentEncounterId);
             if (!enc) return toast('Create an encounter on the Encounter tab first.', 'bad');
-            const row = enc.enemies.find(e => e.npcName === n.name);
-            if (row) row.count++; else enc.enemies.push({ npcName: n.name, count: 1 });
+            enc[list] = enc[list] || [];
+            const row = enc[list].find(e => e.npcName === n.name);
+            if (row) row.count++; else enc[list].push({ npcName: n.name, count: 1 });
             Store.changed();
-            toast(n.name + ' added to ' + enc.name + '.', 'good');
+            toast(n.name + ' added to ' + enc.name + (list === 'allies' ? ' as an ally.' : '.'), 'good');
           }
-        }, 'Add to current encounter'),
+        }, label)),
         h('button.ghost', { onclick: () => { Creatures.editCopyOf(n); App.show('creatures'); } },
-          n.custom ? 'Edit' : 'Copy as a custom creature')));
+          n.custom ? 'Edit' : 'Copy as a new NPC type')));
   }
 
   // A full stat block, used here and in the creature builder's preview.

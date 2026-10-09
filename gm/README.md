@@ -1,4 +1,4 @@
-﻿# Primordium GM
+# Primordium GM
 
 The GM's combat companion for Primordium 2.0.
 
@@ -7,6 +7,10 @@ The GM's combat companion for Primordium 2.0.
 Double-click `index.html`. It opens in your browser and works offline. Chrome or Edge is recommended, because only they can save to a file in a folder (see the Save tab).
 
 Use the same browser each time: your players and encounters are saved inside that browser. Make a backup from the Save tab at the end of each session.
+
+## Adding players from the character sheet
+
+On the player's phone (or yours), open the character sheet app and use **⋯ → Export all characters**. Get that file to the laptop, then on the Encounter tab choose **Import character sheets** and pick it. Tick the characters to add; anyone imported before is updated instead of added twice.
 
 ## For later edits
 
