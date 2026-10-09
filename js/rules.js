@@ -1,0 +1,135 @@
+// Game math for Primordium 2.0: power steps, XP, damage estimates, encounter difficulty.
+// Pure functions only (no screen code), so they can be checked with tools/test-rules.js.
+// Sources: docs/rules.md and docs/scaling.md (data in data/scaling.json).
+(function (root) {
+  const RARITIES = ['Basic', 'Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythic'];
+
+  // D20 tactics table (rules.md). Each entry: [rarity, lowest roll, highest roll].
+  const TACTICS_TABLE = {
+    Basic:     [['Basic', 1, 20]],
+    Fair:      [['Basic', 1, 10], ['Common', 11, 16], ['Uncommon', 17, 20]],
+    Good:      [['Basic', 1, 6], ['Common', 7, 12], ['Uncommon', 13, 18], ['Rare', 19, 20]],
+    Great:     [['Basic', 1, 4], ['Common', 5, 9], ['Uncommon', 10, 14], ['Rare', 15, 18], ['Epic', 19, 20]],
+    Excellent: [['Common', 1, 5], ['Uncommon', 6, 10], ['Rare', 11, 15], ['Epic', 16, 19], ['Legendary', 20, 20]],
+    Mythic:    [['Uncommon', 1, 6], ['Rare', 7, 12], ['Epic', 13, 16], ['Legendary', 17, 19], ['Mythic', 20, 20]]
+  };
+
+  function make(S) {
+    const levelToStep = level => Math.max(0, Math.min(12, Math.ceil((Number(level) || 0) / 2)));
+    const step = s => S.steps[String(s)];
+
+    function xpFor(role, level) {
+      const r = S.roles[role];
+      return r ? r.xpMultiplier * (20 + 6 * level) : 0;
+    }
+
+    // Reference player damage per turn against a given armor value (scaling.md section 3).
+    function playerDptVsArmor(s, armor) {
+      const st = step(s);
+      const un = st.playerDamagePerTurn, ar = st.playerDamagePerTurnVsArmored;
+      return Math.max(1, un - (un - ar) * (armor || 0) / st.referenceArmor);
+    }
+
+    // Average damage of one ability's attack, before the target's armor.
+    function attackAverage(atk) {
+      if (!atk) return 0;
+      return atk.strikes * (atk.dice * (atk.sides + 1) / 2 + (atk.flat || 0));
+    }
+
+    function rarityForRoll(tactics, roll) {
+      const row = TACTICS_TABLE[tactics] || TACTICS_TABLE.Basic;
+      const hit = row.find(([, lo, hi]) => roll >= lo && roll <= hi);
+      return hit ? hit[0] : 'Basic';
+    }
+
+    // Estimated damage per turn from a stat block: average over the tactics table,
+    // dropping a rarity when the creature has no damaging ability at the rolled one.
+    // Ignores cooldowns. Returns null when the creature has no rollable damage
+    // (humanoids, pure-effect creatures), so the budget is used instead.
+    function estimateDamagePerTurn(npc) {
+      if (npc.humanoid) return null;
+      const byRarity = {};
+      for (const a of npc.abilities || []) {
+        if (!a.attack) continue;
+        (byRarity[a.rarity] = byRarity[a.rarity] || []).push(attackAverage(a.attack));
+      }
+      if (!Object.keys(byRarity).length) return null;
+      const avgAt = rarity => {
+        for (let i = RARITIES.indexOf(rarity); i >= 0; i--) {
+          const list = byRarity[RARITIES[i]];
+          if (list) return list.reduce((x, y) => x + y, 0) / list.length;
+        }
+        // Nothing at or below: use the lowest damaging ability it has.
+        for (const r of RARITIES) if (byRarity[r]) return avgAt(r);
+        return 0;
+      };
+      let total = 0;
+      for (let roll = 1; roll <= 20; roll++) total += avgAt(rarityForRoll(npc.tactics, roll));
+      return (total / 20) * (npc.turnsPerPhase || 1);
+    }
+
+    function budgetFor(role, level) {
+      const b = S.budgetTable[String(levelToStep(level))];
+      return b && b[role] ? b[role] : null;
+    }
+
+    // Numbers the difficulty estimate uses for one creature.
+    function combatProfile(npc) {
+      const budget = budgetFor(npc.role, npc.level) || { hp: 0, damagePerTurn: 0 };
+      const est = estimateDamagePerTurn(npc);
+      return {
+        hp: typeof npc.hp === 'number' && npc.hp > 0 ? npc.hp : budget.hp,
+        hpFromBudget: !(typeof npc.hp === 'number' && npc.hp > 0),
+        armor: npc.armor || 0,
+        dmg: est != null ? est : budget.damagePerTurn,
+        dmgFromBudget: est == null
+      };
+    }
+
+    function difficultyBand(share) {
+      const b = S.difficultyBands;
+      if (share < b.Easy) return 'Easy';
+      if (share < b.Standard) return 'Standard';
+      if (share < b.Hard) return 'Hard';
+      return 'Deadly';
+    }
+
+    // Encounter difficulty (scaling.md section 8).
+    // groups: [{ hp, armor, dmg, count }]. They are put in kill order (fastest to kill first).
+    function encounterDifficulty(partyStep, partySize, groups) {
+      const st = step(partyStep);
+      const N = Math.max(1, partySize);
+      const rows = groups.filter(g => g.count > 0).map(g => {
+        const dpt = playerDptVsArmor(partyStep, g.armor);
+        return Object.assign({}, g, {
+          killTurns: g.hp / dpt,
+          dropTurns: st.playerHP / Math.max(1, g.dmg - st.playerArmor)
+        });
+      }).sort((a, b) => a.killTurns - b.killTurns);
+
+      let turnsSoFar = 0, lostTotal = 0;
+      for (const g of rows) {
+        const roundsBefore = turnsSoFar / N;
+        g.lost = (g.count * roundsBefore + (g.killTurns / N) * g.count * (g.count + 1) / 2) / g.dropTurns;
+        lostTotal += g.lost;
+        turnsSoFar += g.count * g.killTurns;
+      }
+      const shareLost = lostTotal / N;
+      return {
+        groups: rows,
+        roundsToClear: turnsSoFar / N,
+        shareLost,
+        band: rows.length ? difficultyBand(shareLost) : null
+      };
+    }
+
+    return {
+      RARITIES, TACTICS_TABLE, levelToStep, xpFor, playerDptVsArmor, attackAverage,
+      rarityForRoll, estimateDamagePerTurn, budgetFor, combatProfile,
+      difficultyBand, encounterDifficulty, stepInfo: step
+    };
+  }
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = make;
+  else root.Rules = make(root.PRIMORDIUM_SCALING);
+})(typeof window !== 'undefined' ? window : globalThis);
