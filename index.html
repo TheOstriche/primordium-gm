@@ -11,7 +11,6 @@
     <h1 class="brand">Primordium <span>GM</span></h1>
     <nav class="tabs" id="tabs">
       <button data-view="encounter" class="active">Encounter</button>
-      <button data-view="map">Map</button>
       <button data-view="combat">Combat</button>
       <button data-view="reference">Reference</button>
       <button data-view="creatures">Creatures</button>
@@ -22,8 +21,7 @@
 
   <main>
     <section class="view active" id="view-encounter"></section>
-    <section class="view" id="view-map"><p class="placeholder">The grid map comes in step 2.</p></section>
-    <section class="view" id="view-combat"><p class="placeholder">Initiative, phases, and enemy turns come in steps 3 to 6.</p></section>
+    <section class="view" id="view-combat"></section>
     <section class="view" id="view-reference"><p class="placeholder">The skill and enemy reference comes in step 7.</p></section>
     <section class="view" id="view-creatures"><p class="placeholder">The custom creature builder comes in step 8.</p></section>
     <section class="view" id="view-save"></section>
@@ -37,9 +35,12 @@
   <script src="js/rules.js"></script>
   <script src="js/store.js"></script>
   <script src="js/data.js"></script>
+  <script src="js/combat-engine.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/grid.js"></script>
   <script src="js/save-view.js"></script>
   <script src="js/encounter.js"></script>
+  <script src="js/combat-view.js"></script>
 </body>
 </html>

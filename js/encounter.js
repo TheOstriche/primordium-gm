@@ -151,7 +151,11 @@
             ' (step ' + sm.step + ', ' + stepInfo.stage + '). Estimate uses reference players at this step: ' +
             stepInfo.playerHP + ' HP, ' + stepInfo.playerArmor + ' armor.')
         : h('p.muted.small', 'Tick players in the party list to see the difficulty.'),
-      sm.notes.length ? h('ul.notes', sm.notes.map(n => h('li', n))) : null
+      sm.notes.length ? h('ul.notes', sm.notes.map(n => h('li', n))) : null,
+      h('div.row',
+        S().combat
+          ? h('button', { onclick: () => App.show('combat') }, 'Back to the combat in progress')
+          : h('button.primary', { disabled: !enc.enemies.length && !sm.party.length, onclick: () => App.show('combat') }, 'Go to combat'))
     );
   }
 
@@ -197,7 +201,8 @@
           h('input', { type: 'checkbox', checked: enc.partyIds.includes(p.id), onchange: e => toggle(p.id, e.target.checked) }),
           h('strong', p.name)),
         h('span.muted.small', 'Lv ' + p.level + ' · ' + p.hp + ' HP · ' + p.armor + ' armor · ' +
-          GameData.STATS.map(k => k + ' ' + (p.stats[k] ?? 0)).join(' ')),
+          GameData.STATS.map(k => k + ' ' + (p.stats[k] ?? 0)).join(' ') +
+          (p.xp ? ' · ' + fmt(p.xp, 2) + ' XP' : '')),
         h('button.ghost', { onclick: () => { editingPlayerId = p.id; drawParty(); } }, 'Edit'))),
       players.length ? h('div.row',
         h('button.ghost', { onclick: () => { enc.partyIds = players.map(p => p.id); Store.changed(); drawEncounter(); } }, 'Select all'),
