@@ -58,6 +58,13 @@ Roll a D20 on the enemy's Tactics row to set the rarity of its Standard ability 
 - Stabilize: an adjacent ally's Standard action and a Knowledge check of 6+ stops the clock.
 - When the clock runs out, the character dies.
 
+## GM rulings for the tool (decided by the owner, 2026-10-08)
+- Diagonal movement costs 1M (every square in any direction is 1M).
+- A Boss's second turn comes at the end of the phase, after everyone else.
+- Stack recovery: one D4 per stack type, each with its own target number.
+- Halving stacks rounds up (5 stacks lose 3). A failed dodge's 1.5x damage rounds down.
+- Until abilities are tagged Quick or Defensive, every enemy ability is treated as Standard.
+
 ## Difficulty and XP
 - Enemy XP = role multiplier x (20 + 6 x level): Minion x0.25, Standard x1, Elite x3, Boss x10 (already computed in npc-data.js). The party splits XP evenly.
 - Difficulty: estimate the share of party HP an encounter takes. Easy under 15%, Standard 15-35%, Hard 35-60%, Deadly over 60%. The budget assumes player HP of 35 + 25 per 5 levels, and player damage per turn rising with level (see the Enemy Budget workbook).
